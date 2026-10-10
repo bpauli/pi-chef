@@ -17,9 +17,10 @@ const spec: TaskSpec = {
   createdAt: millis(1),
 };
 
-/** A detached process whose argv carries a `--mode json --session-id` pair, like a cook. */
+/** A detached process whose environment carries the cook marker, with a child that inherits it like a cook's bash. */
 function sleeper(sessionId: string): ChildProcess {
-  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "--", "--mode", "json", "--session-id", sessionId], { detached: true, stdio: "ignore" });
+  const code = 'require("node:child_process").spawn("sleep", ["30"], { stdio: "ignore" }); setInterval(() => {}, 1000)';
+  const child = spawn(process.execPath, ["-e", code], { detached: true, stdio: "ignore", env: { ...process.env, CHEF_SESSION_ID: sessionId } });
   child.unref();
   return child;
 }
@@ -58,19 +59,19 @@ test("the first prompt frames the brief with the worktree facts, the follow-up p
   assert.doesNotMatch(firstPrompt(spec, project, []), /Messages from the chef/);
 });
 
-test("CookTable adopts a live process by its session id argv and drops it once it exits", async () => {
+test("CookTable adopts the group leader of a live cook by its environment marker and drops it once it exits", async () => {
   const sid = `adopt-${process.pid}-${Date.now()}`;
   const child = sleeper(sid);
   await settle();
   const table = new CookTable();
   await table.adopt();
-  assert.equal((await table.live()).get(sid), child.pid);
+  assert.equal((await table.live()).get(sid), child.pid, "the leader, not its sleep child");
   await signalCook(child.pid as Pid, sid, "SIGTERM");
   await gone(child.pid!);
   assert.equal((await table.live()).has(sid), false);
 });
 
-test("a recorded pid whose argv no longer names the session is not live (pid reuse guard)", async () => {
+test("a recorded pid whose environment does not name the session is not live (pid reuse guard)", async () => {
   const child = sleeper("some-other-session");
   await settle();
   const table = new CookTable();

@@ -100,11 +100,14 @@ A run that settled without `chef_report` derives `done` with `reported: false` a
 
 ## Cook identity and liveness
 
-No pid is stored on disk. A cook is identified by `--session-id <uuid>` in its argv. The owner keeps an in-memory map from session id to pid:
+No pid is stored on disk. A cook is identified by `CHEF_SESSION_ID=<uuid>` in its start-time process environment, set by the launcher. Argv is not usable: Pi 1.0.3 sets `process.title = "pi"` at startup (`dist/cli/setup.js`), which overwrites `/proc/<pid>/cmdline` within the first second, so `--session-id` disappears from `ps`. The cook role deletes `CHEF_SESSION_ID`, `CHEF_ROLE`, and `CHEF_TASK_DIR` from its `process.env` when it loads, so the processes a cook spawns (Pi's bash runs them in their own process groups) carry no marker and a nested `pi` is never taken for a cook. As a guard for the load window, the cook is the marked process whose parent carries no marker. The owner keeps an in-memory map from session id to pid:
 
 - At launch it records the pid that `spawn` returns.
-- At activation (restart) it runs `ps -eo pid=,args=` once and maps session ids to pids. This adopts cooks that outlived the last chef.
-- On each tick it checks a known pid with `process.kill(pid, 0)` and confirms the argv still holds the session id (read `/proc/<pid>/cmdline` on Linux, `ps -o args= -p <pid>` elsewhere). This guards against pid reuse.
+- At activation (restart) it scans once: `/proc/*/environ` on Linux, `ps -E -eo pid=,ppid=,command=` elsewhere. This adopts cooks that outlived the last chef.
+- On each tick it checks a known pid with `process.kill(pid, 0)` and confirms the environment still holds the marker (`/proc/<pid>/environ` on Linux, `ps -E -o command= -p <pid>` elsewhere). This guards against pid reuse.
+- A claimed, unsettled run with no known pid gets one scan before it counts as dead. The scan adopts a cook another session launched. After that scan the run is dead for good.
+
+A stop sends SIGTERM to the cook's process group, and Pi kills its own bash tree. SIGKILL after the grace period gives Pi no chance, so a command it was running can outlive it.
 
 All subprocess calls (`ps`, `git`) are async. Git facts are computed only for `chef_result`, `chef_close`, and dispatch, never on the tick.
 
@@ -116,7 +119,7 @@ Each step is safe if a crash stops it halfway.
 2. Write `runs/<n>.prompt.md`. For a relaunch it holds the pending inbox messages.
 3. Move those messages to `inbox/handled/`.
 4. Create `runs/<n>.jsonl` with O_EXCL (the claim). A failed claim means another launch won. Stop.
-5. Spawn `pi --mode json -p --session-id <uuid> --session-dir <task>/session -e <chef entry> [--model] [--thinking] [cookArgs...] @<prompt file>`, detached in its own process group, stdin `ignore`, stdout to the claimed file, stderr to `runs/<n>.err`, env `CHEF_ROLE=cook`, `CHEF_TASK_DIR=<task dir>`.
+5. Spawn `pi --mode json -p --session-id <uuid> --session-dir <task>/session -e <chef entry> [--model] [--thinking] [cookArgs...] @<prompt file>`, detached in its own process group, stdin `ignore`, stdout to the claimed file, stderr to `runs/<n>.err`, env `CHEF_ROLE=cook`, `CHEF_TASK_DIR=<task dir>`, `CHEF_SESSION_ID=<uuid>`.
 
 The child runs the same Pi as the chef: `process.execPath` plus `process.argv[1]` when Pi runs under Node, `process.execPath` alone for the compiled binary. It never resolves `pi` from `PATH`.
 
@@ -183,6 +186,8 @@ These were measured with probe scripts against the real binary. The fake model i
 - `structuredContent` appears on `tool_execution_end` in the JSONL stream.
 - `@<absolute path>` works as the prompt of `-p`. A relaunch with the same `--session-id` and `--session-dir` continues the conversation.
 - A `defaultActive: false` tool is absent from the model and its `promptGuidelines` are absent from the system prompt until `setActiveTools` names it.
+- Pi sets `process.title = "pi"` at startup. After about 800 ms `/proc/<pid>/cmdline` reads `pi` only. `/proc/<pid>/environ` keeps the launcher's variables (probe-title.mjs).
+- Pi's bash tool spawns its command with `detached: true`, in its own process group, and kills that tree itself on SIGTERM.
 
 ## Grafts and fixes from the arena
 
