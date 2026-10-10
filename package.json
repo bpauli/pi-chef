@@ -1,0 +1,33 @@
+{
+  "name": "chef",
+  "private": true,
+  "version": "0.1.0",
+  "description": "One chef you talk to, many cooks doing the work. A Pi package that dispatches and monitors subagents across projects and tasks.",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/bpauli/chef",
+  "repository": "https://github.com/bpauli/chef",
+  "keywords": ["pi-package", "subagents", "orchestration", "worktrees"],
+  "engines": { "node": ">=22.19.0" },
+  "pi": {
+    "extensions": ["./extension/index.ts"],
+    "skills": ["./skills"]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test 'test/**/*.test.ts'",
+    "check": "npm run typecheck && npm test"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.0.3",
+    "@earendil-works/pi-tui": "1.0.3",
+    "@types/node": "^24.0.0",
+    "typebox": "1.3.27",
+    "typescript": "^5.9.0"
+  }
+}
