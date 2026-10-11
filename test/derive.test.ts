@@ -278,7 +278,7 @@ test("no notice for stopped outcomes, notified runs, or a task with a pending re
 
 // ---- plan ----
 
-const base = { live: none, now: NOW, cap: 3, killGraceMs: 5000 };
+const base = { live: none, now: NOW, cap: 3, killGraceMs: 5000, exitGraceMs: 10_000, reclaimAfterMs: 30_000 };
 
 test("plan launches the oldest queued tasks first and never more than cap minus busy", () => {
   const cooking = record({ spec: spec({ id: id("api-1"), sessionId: "s1" as TaskSpec["sessionId"], createdAt: millis(1) }), runs: [run(1, {})] });
@@ -318,6 +318,23 @@ test("a live process of a stopped run gets SIGTERM, then SIGKILL after the grace
   assert.deepEqual(soon, [{ kind: "signal", task: "api-1", pid: 4242, signal: "SIGTERM" }]);
   const late = plan({ ...base, records: [rec], live: live(), now: millis(NOW + 6000) }).actions;
   assert.deepEqual(late, [{ kind: "signal", task: "api-1", pid: 4242, signal: "SIGKILL" }]);
+});
+
+test("a cook still alive after its run settled gets SIGTERM after the exit grace period and SIGKILL after the kill grace period", () => {
+  const rec = record({ runs: [run(1, { ...settledDone(), lastAt: millis(NOW - 11_000) })] });
+  const kinds = (now: number) => plan({ ...base, records: [rec], live: live(), now: millis(now) }).actions.map((a) => (a.kind === "signal" ? a.signal : a.kind));
+  assert.deepEqual(kinds(NOW - 5000), ["notify"], "6 s after settling the cook may still be shutting down");
+  assert.deepEqual(kinds(NOW), ["notify", "SIGTERM"]);
+  assert.deepEqual(kinds(NOW + 5000), ["notify", "SIGKILL"]);
+  assert.deepEqual(plan({ ...base, records: [rec], now: millis(NOW) }).actions.map((a) => a.kind), ["notify"], "no process, nothing to signal");
+});
+
+test("an empty claim younger than the reclaim threshold is left alone, an older one is reclaimed", () => {
+  const young = record({ runs: [run(1, { prompted: false }, { bytes: 0, claimedAt: millis(NOW - 5000) })] });
+  assert.deepEqual(deriveTask(young, none, NOW).state, { kind: "queued", why: "interrupted-launch" });
+  assert.deepEqual(plan({ ...base, records: [young] }).actions, []);
+  const old = record({ runs: [run(1, { prompted: false }, { bytes: 0, claimedAt: millis(NOW - 31_000) })] });
+  assert.deepEqual(plan({ ...base, records: [old] }).actions, [{ kind: "launch", task: "api-1", run: 1, prompt: "existing", reclaim: true }]);
 });
 
 test("a closed task with a worktree yields remove-worktree, and its live cook is signalled", () => {

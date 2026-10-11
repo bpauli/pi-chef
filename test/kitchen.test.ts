@@ -2,14 +2,15 @@
 // and CHEF_HOME. The test drives ticks itself; the chef shell owns the timer.
 
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { closeSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, before, test } from "node:test";
 import { ChefError, type Notice, type Pid, type SessionId, type TaskId, millis, parseProjectName, runNo } from "../extension/domain.ts";
 import { alive, runsSession, scanCooks, signalCook } from "../extension/cooks.ts";
 import { Kitchen, type KitchenDeps, KitchenReader, type Opened } from "../extension/kitchen.ts";
 import { RunTails, Store } from "../extension/store.ts";
-import { CHEF_ENTRY, COMMIT_STEP, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, SLOW_EXIT, type TempKitchen, git, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
+import { CHEF_ENTRY, COMMIT_STEP, FAKE_MODEL, FAKE_PROVIDER, NEVER_EXIT, PI_CLI, REPORT_STEP, SLOW_EXIT, type TempKitchen, git, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
 
 let fake: Awaited<ReturnType<typeof startFakeModel>>;
 let tk: TempKitchen;
@@ -416,6 +417,56 @@ test("a broken task.json or config.json does not stop the tick: the broken task 
   assert.deepEqual(quiet.kind === "ok" && quiet.errors, []);
   assert.deepEqual(quiet.kind === "ok" && quiet.board.broken.map((b) => b.id), [badTask]);
   assert.deepEqual(quiet.kind === "ok" && quiet.board.open.map((v) => v.spec.id), [view.spec.id]);
+});
+
+test("a cook that never exits after its report is signalled and killed by the tick, and the task can be sent to again", async () => {
+  const { kitchen, store } = await setup({ cookArgs: ["-e", FAKE_PROVIDER, "-e", NEVER_EXIT] }, { exitGraceMs: 500, killGraceMs: 1000 });
+  const brief = [REPORT_STEP("needs_decision", "cookie or bearer token?"), REPORT_STEP("done", "used cookies")].join("\n");
+  const view = await kitchen.dispatch({ project: "api", title: "Stuck", brief });
+  const n1 = await waitNotice(kitchen, view.spec.id);
+  assert.equal(n1.outcome.kind, "needs_decision");
+  const pid = (await scanCooks()).get(view.spec.sessionId);
+  assert.ok(pid !== undefined, "the reported cook is still alive");
+  const deadline = Date.now() + 4000;
+  while (Date.now() < deadline) {
+    await kitchen.tick();
+    await new Promise((ok) => setTimeout(ok, 200));
+  }
+  assert.equal(alive(pid), false, "the tick escalated SIGTERM to SIGKILL for the stuck cook");
+  assert.deepEqual(await kitchen.send(view.spec.id, "use cookies"), { kind: "relaunched", run: 2 });
+  const n2 = await waitNotice(kitchen, view.spec.id);
+  assert.deepEqual(n2.outcome, { kind: "done", summary: "used cookies", reported: true });
+  await until("run 2 exit", async () => ((await scanCooks()).has(view.spec.sessionId) ? undefined : true), 10_000);
+  assert.deepEqual(store.readEvents(view.spec.id).map((e) => e.type), ["notified", "notified"]);
+});
+
+test("a launch rescans for a cook the owner does not know, so a liveness miss never starts a second cook on the session", async () => {
+  const { kitchen, store } = await setup();
+  const id = store.nextTaskId(parseProjectName("api"));
+  const sid = `0199c0de-3333-7000-8000-${String(process.pid).padStart(12, "0")}` as SessionId;
+  store.createTask({ id, project: parseProjectName("api"), title: "Ghost", brief: "unused", branch: `chef/${id}`, worktree: store.worktreeDir(id), baseBranch: "main", sessionId: sid, model: undefined, createdAt: millis(Date.now()) });
+  store.writePrompt(id, runNo(1), "STEP say: hi\n");
+  const fds = store.claimRun(id, runNo(1))!;
+  writeFileSync(store.runFile(id, runNo(1)), `${JSON.stringify({ type: "turn_start" })}\n`);
+  for (const fd of [fds.stdout, fds.stderr]) closeSync(fd);
+  const first = await waitNotice(kitchen, id);
+  assert.equal(first.outcome.kind, "failed", "no process anywhere: the run is dead");
+
+  // A cook for this session appears after the owner's one scan, as if the scan had raced its start.
+  const ghost = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore", env: { ...process.env, CHEF_SESSION_ID: sid } });
+  ghost.unref();
+  await until("ghost cook", async () => ((await scanCooks()).get(sid) === ghost.pid ? true : undefined));
+  try {
+    const delivery = await kitchen.send(id, "go on");
+    assert.equal(existsSync(store.runFile(id, runNo(2))), false, "no second cook while one runs on the session");
+    assert.deepEqual(delivery, { kind: "steer" });
+  } finally {
+    ghost.kill("SIGKILL");
+  }
+  await until("ghost exit", () => (alive(ghost.pid!) ? undefined : true));
+  const resumed = await waitNotice(kitchen, id);
+  assert.equal(resumed.run, 2);
+  assert.equal(resumed.outcome.kind, "done");
 });
 
 test("a second session opens read-only and cannot dispatch; takeover moves the lease and the old owner loses it", async () => {
