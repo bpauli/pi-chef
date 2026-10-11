@@ -47,7 +47,7 @@ All tools are registered with `defaultActive: false` and `exposure: "model-only"
 | `chef_add_project` | `path`, `name?`, `note?`, `baseBranch?` | Registers a git repo. The name defaults to the directory name. The base branch defaults to the current branch of the repo. A given base branch must pass `git check-ref-format --branch` and exist locally. |
 | `chef_dispatch` | `project`, `title`, `brief`, `model?` | Creates a task and launches a cook, or queues it behind the cap. A blank `model` is refused. Pi 1.0.3 takes the argument after `--model` and `--thinking` as the value even when it starts with a dash (`dist/cli/args.js`), so a model is never read as a flag. |
 | `chef_board` | none | Projects, open tasks with state and activity, cook count. |
-| `chef_send` | `task`, `message` | One verb for steer, answer, and resume. Cooking: the cook takes it after its current tool call. Idle: the task relaunches on the same session with the message. A cook that reported and is still exiting blocks the relaunch, so `send` ticks until the exit (bounded by `exitWaitMs`, default 5 s) and reports the new run. It reports `queued` only when the cook cap holds the task. |
+| `chef_send` | `task`, `message` | One verb for steer, answer, and resume. Cooking: the cook takes it after its current tool call. Idle: the task relaunches on the same session with the message. A cook that reported and is still exiting blocks the relaunch, so `send` ticks until the exit (bounded by `exitWaitMs`, default 5 s) and reports the new run, or `after-exit` when the wait runs out. It reports `queued` only when the cook cap holds the task. |
 | `chef_stop` | `task` | Stops a cooking cook (process group SIGTERM, SIGKILL after a grace period), or holds a queued task. The worktree stays. |
 | `chef_result` | `task` | Outcome, summary, branch, commits ahead of base, landed or not, worktree clean or dirty, diffstat, file pointers. |
 | `chef_close` | `task`, `discard?` | Removes the worktree and closes the task. Refuses dirty or unlanded work, a cooking task, and a task with an undelivered message unless `discard: true`. |
@@ -102,7 +102,7 @@ A run that settled without `chef_report` derives `done` with `reported: false` a
 
 A launch that produces no output is a failure, not a retry. Three facts derive it, in this order:
 
-- A `launch_failed {run, reason}` event for the run that would launch next, written by the owner when the launch threw (worktree creation, the claim), when `spawn` reported an error, or when the cook process exited before its run file had a first line. The owner that spawned the cook sees its exit; `cookEnded` checks that the run file is still zero bytes before it writes the event.
+- A `launch_failed {run, reason}` event for the run that would launch next, written by the owner when the launch threw (worktree creation, the claim), when `spawn` reported an error, or when the cook process exited before its run file had a first line. The owner that spawned the cook sees its exit; `failLaunchIfNoOutput` checks that the run file is still zero bytes before it writes the event.
 - Without an event: a zero-byte run file with no live process and a non-empty err file. This covers a cook that died while no owner ran. The reason is the err tail.
 - A `launch_failed` event for a run that has output after all is ignored. The run's own outcome wins.
 

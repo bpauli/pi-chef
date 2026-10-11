@@ -51,7 +51,7 @@ export type Delivery =
   | { kind: "steer" }
   | { kind: "relaunched"; run: RunNo }
   | { kind: "queued"; position: number }
-  | { kind: "exiting" }
+  | { kind: "after-exit" }
   | { kind: "after-stop" }
   | { kind: "launch-failed"; reason: string };
 
@@ -74,8 +74,8 @@ export class KitchenReader {
   protected readonly tails = new RunTails();
   protected readonly cooks = new CookTable();
   protected readonly now: () => Millis;
-  private readonly scanned = new Set<string>();
-  private readonly finished = new Set<TaskId>();
+  private readonly scannedUnknownRuns = new Set<string>();
+  private readonly fullyClosed = new Set<TaskId>();
 
   constructor(deps: KitchenDeps) {
     this.deps = deps;
@@ -137,7 +137,7 @@ export class KitchenReader {
   }
 
   protected snapshot(): Snapshot {
-    return this.store.snapshot(this.tails, this.finished);
+    return this.store.snapshot(this.tails, this.fullyClosed);
   }
 
   protected async liveCooks(records: readonly TaskRecord[]): Promise<LiveCooks> {
@@ -148,11 +148,11 @@ export class KitchenReader {
       if (last === undefined || last.claim.kind === "none" || last.facts.settled || live.has(rec.spec.sessionId)) return false;
       const key = `${rec.spec.id}#${last.n}`;
       candidates.add(key);
-      if (this.scanned.has(key)) return false;
-      this.scanned.add(key);
+      if (this.scannedUnknownRuns.has(key)) return false;
+      this.scannedUnknownRuns.add(key);
       return true;
     });
-    for (const key of this.scanned) if (!candidates.has(key)) this.scanned.delete(key);
+    for (const key of this.scannedUnknownRuns) if (!candidates.has(key)) this.scannedUnknownRuns.delete(key);
     if (unknown.length) {
       await this.cooks.adopt();
       live = await this.cooks.live();
@@ -176,11 +176,11 @@ export class KitchenReader {
     const open = views.filter((v) => v.state.kind !== "closed").sort((a, b) => b.spec.createdAt - a.spec.createdAt);
     for (const v of views) {
       if (v.state.kind === "closed" && !this.store.loadRecord(v.spec.id, this.tails).worktreeExists) {
-        this.finished.add(v.spec.id);
+        this.fullyClosed.add(v.spec.id);
         this.tails.forget(this.store.taskDir(v.spec.id));
       }
     }
-    const closedCount = this.finished.size + views.filter((v) => v.state.kind === "closed" && !this.finished.has(v.spec.id)).length;
+    const closedCount = this.fullyClosed.size + views.filter((v) => v.state.kind === "closed" && !this.fullyClosed.has(v.spec.id)).length;
     return {
       role,
       holder,
@@ -265,7 +265,7 @@ export class Kitchen extends KitchenReader {
         if (state?.kind === "idle" && state.outcome.kind === "failed") return { kind: "launch-failed", reason: state.outcome.reason };
         if (state?.kind !== "queued") throw new ChefError(`${task} did not take the message: it is ${state ? stateText(state) : "gone"}.`);
         if (!(await this.cooks.live()).has(rec.spec.sessionId)) return { kind: "queued", position: queuePosition(report.board, task) };
-        if (this.now() >= deadline) return { kind: "exiting" };
+        if (this.now() >= deadline) return { kind: "after-exit" };
         await sleep(EXIT_POLL_MS);
       }
     });
@@ -398,12 +398,12 @@ export class Kitchen extends KitchenReader {
         config: this.store.readConfig(),
         fds: claim.fds,
       },
-      (end) => this.cookEnded(spec.id, action.run, end),
+      (end) => this.failLaunchIfNoOutput(spec.id, action.run, end),
     );
     if (pid !== undefined) this.cooks.record(spec.sessionId, pid);
   }
 
-  private cookEnded(task: TaskId, run: RunNo, end: CookEnd): void {
+  private failLaunchIfNoOutput(task: TaskId, run: RunNo, end: CookEnd): void {
     const reason = end.kind === "error" ? end.message : `cook exited with ${end.signal ?? `code ${end.code}`} before its first output line`;
     void this.mutate(async () => {
       if (this.store.runBytes(task, run) === 0) this.store.appendEvent(task, { type: "launch_failed", at: this.now(), run, reason });

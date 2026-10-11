@@ -147,14 +147,14 @@ test("send to a cook that reported and is still exiting waits for the exit and r
   assert.deepEqual(store.pendingMessages(view.spec.id), []);
 });
 
-test("send gives up waiting for a slow exit after exitWaitMs and reports exiting, and the tick relaunches once the cook is gone", async () => {
+test("send gives up waiting for a slow exit after exitWaitMs and reports after-exit, and the tick relaunches once the cook is gone", async () => {
   const { kitchen, store } = await setup({ cookArgs: ["-e", FAKE_PROVIDER, "-e", SLOW_EXIT] }, { exitWaitMs: 200 });
   const brief = [REPORT_STEP("needs_decision", "cookie or bearer token?"), REPORT_STEP("done", "used cookies")].join("\n");
   const view = await kitchen.dispatch({ project: "api", title: "Fix login", brief });
   await waitNotice(kitchen, view.spec.id);
 
   const delivery = await kitchen.send(view.spec.id, "use cookies");
-  assert.deepEqual(delivery, { kind: "exiting" });
+  assert.deepEqual(delivery, { kind: "after-exit" });
   assert.equal(existsSync(store.runFile(view.spec.id, runNo(2))), false);
   const n2 = await waitNotice(kitchen, view.spec.id);
   assert.deepEqual(n2.outcome, { kind: "done", summary: "used cookies", reported: true });
