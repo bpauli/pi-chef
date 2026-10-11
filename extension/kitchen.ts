@@ -5,6 +5,7 @@ import {
   type Board,
   ChefError,
   type Holder,
+  type Lease,
   type Millis,
   type Notice,
   type NoticeRef,
@@ -102,7 +103,8 @@ export class KitchenReader {
   }
 
   holder(): Holder | undefined {
-    return holderOf(this.store.readLease());
+    const lease = this.store.readLease();
+    return lease && holderOf(lease);
   }
 
   async promote(): Promise<Kitchen | undefined> {
@@ -116,7 +118,7 @@ export class KitchenReader {
     const snap = this.snapshot();
     const live = await this.liveCooks(snap.records);
     const { views } = plan(this.planInput(snap.records, live, snap.config.maxCooks));
-    return this.boardOf(views, snap, "read-only", holderOf(this.store.readLease()));
+    return this.boardOf(views, snap, "read-only", this.holder());
   }
 
   async result(task: TaskId): Promise<TaskResult> {
@@ -205,7 +207,7 @@ export class Kitchen extends KitchenReader {
       return view ?? deriveTask(this.store.loadRecord(task, this.tails), new Map(), this.now());
     };
     const next = this.chain.then(() => {
-      if (!leaseIsMine(this.store, this.deps.self)) throw lostError(holderOf(this.store.readLease()));
+      if (!leaseIsMine(this.store, this.deps.self)) throw lostError(this.holder());
       return op(viewAfterTick);
     });
     this.chain = next.catch(() => undefined);
@@ -332,7 +334,7 @@ export class Kitchen extends KitchenReader {
   }
 
   private async runTick(): Promise<TickReport> {
-    if (!leaseIsMine(this.store, this.deps.self)) return { kind: "lost", holder: holderOf(this.store.readLease()) };
+    if (!leaseIsMine(this.store, this.deps.self)) return { kind: "lost", holder: this.holder() };
     const snap = this.snapshot();
     const { records } = snap;
     const live = await this.liveCooks(records);
@@ -351,7 +353,7 @@ export class Kitchen extends KitchenReader {
       }
     }
     const fresh = launched ? plan(this.planInput(this.snapshot().records, await this.cooks.live(), cap)).views : views;
-    return { kind: "ok", board: this.boardOf(fresh, snap, "owner", holderOf(this.store.readLease())), notices, errors };
+    return { kind: "ok", board: this.boardOf(fresh, snap, "owner", this.holder()), notices, errors };
   }
 
   private async execute(action: Exclude<Action, { kind: "notify" }>, rec: TaskRecord): Promise<void> {
@@ -431,15 +433,17 @@ export function lostError(holder: Holder | undefined): ChefError {
   return new ChefError(`${who}. You can read the board and results here. Run /chef takeover to move the kitchen to this session.`);
 }
 
-function holderOf(lease: ReturnType<Store["readLease"]>): Holder | undefined {
-  return lease ? { pid: lease.pid as Pid, sessionId: lease.sessionId } : undefined;
+function holderOf(lease: Lease): Holder {
+  return { pid: lease.pid as Pid, sessionId: lease.sessionId };
 }
+
+const isSelf = (lease: Lease, self: KitchenDeps["self"]): boolean => lease.pid === self.pid && lease.sessionId === self.sessionId;
 
 export async function acquireLease(store: Store, self: KitchenDeps["self"], takeover: boolean): Promise<{ kind: "acquired" } | { kind: "held"; holder: Holder }> {
   const lease = store.readLease();
-  if (lease && !(lease.pid === self.pid && lease.sessionId === self.sessionId)) {
+  if (lease && !isSelf(lease, self)) {
     const start = await pidStart(lease.pid);
-    if (start !== undefined && start === lease.pidStart && !takeover) return { kind: "held", holder: { pid: lease.pid as Pid, sessionId: lease.sessionId } };
+    if (start !== undefined && start === lease.pidStart && !takeover) return { kind: "held", holder: holderOf(lease) };
   }
   store.writeLease({ pid: self.pid, pidStart: (await pidStart(self.pid)) ?? "", sessionId: self.sessionId, since: Date.now() });
   return { kind: "acquired" };
@@ -447,5 +451,5 @@ export async function acquireLease(store: Store, self: KitchenDeps["self"], take
 
 export function leaseIsMine(store: Store, self: KitchenDeps["self"]): boolean {
   const lease = store.readLease();
-  return lease !== undefined && lease.pid === self.pid && lease.sessionId === self.sessionId;
+  return lease !== undefined && isSelf(lease, self);
 }

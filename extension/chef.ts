@@ -338,9 +338,8 @@ export function installChef(pi: ExtensionAPI): void {
     promptSnippet: "Answer, steer, or resume a cook",
     parameters: SendParams,
     async execute(_id, params) {
-      const p = params;
-      const id = task(p.task);
-      const d = await owner().send(id, p.message);
+      const id = task(params.task);
+      const d = await owner().send(id, params.message);
       switch (d.kind) {
         case "steer":
           return text(`Sent to ${id}'s running cook. It reads the message after its current step. If the run ends first, chef restarts it with your message.`);
@@ -399,9 +398,8 @@ export function installChef(pi: ExtensionAPI): void {
     promptSnippet: "Close a landed task",
     parameters: CloseParams,
     async execute(_id, params) {
-      const p = params;
-      const id = task(p.task);
-      const { view, removal } = await owner().close(id, p.discard === true);
+      const id = task(params.task);
+      const { view, removal } = await owner().close(id, params.discard === true);
       if ("error" in removal) return text(`${id} closed. Removing its worktree failed: ${removal.error} chef retries it on every tick.`);
       const worktree = removal.worktree === "removed" ? "Worktree removed." : "Worktree was already gone.";
       const branch = { deleted: `Branch ${view.spec.branch} deleted.`, kept: `Branch ${view.spec.branch} kept: its commits are not on ${view.spec.baseBranch}.`, missing: `Branch ${view.spec.branch} was already gone.` }[removal.branch];
