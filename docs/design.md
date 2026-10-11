@@ -98,6 +98,8 @@ type Outcome =
 
 A run that settled without `chef_report` derives `done` with `reported: false` and the final assistant text as the summary. A provider error, a crash, or an exit before `agent_settled` derives `failed`. A prompt file with no run file, or a zero-byte run file with no live process, derives `queued(interrupted-launch)`, not `failed`.
 
+A `stop` event holds a task. A pending message older than the last stop does not relaunch it; the next newer message does, and the relaunch prompt carries every pending message. A held task is `idle(stopped)`.
+
 ## Cook identity and liveness
 
 No pid is stored on disk. A cook is identified by `CHEF_SESSION_ID=<uuid>` in its start-time process environment, set by the launcher. Argv is not usable: Pi 1.0.3 sets `process.title = "pi"` at startup (`dist/cli/setup.js`), which overwrites `/proc/<pid>/cmdline` within the first second, so `--session-id` disappears from `ps`. The cook role deletes `CHEF_SESSION_ID`, `CHEF_ROLE`, and `CHEF_TASK_DIR` from its `process.env` when it loads, so the processes a cook spawns (Pi's bash runs them in their own process groups) carry no marker and a nested `pi` is never taken for a cook. As a guard for the load window, the cook is the marked process whose parent carries no marker. The owner keeps an in-memory map from session id to pid:

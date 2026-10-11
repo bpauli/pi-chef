@@ -1,7 +1,7 @@
 // Shared setup for the e2e tests: the fake model server, a temp kitchen with a
 // temp Pi agent dir, temp git repos, and polling helpers.
 
-import { type ChildProcess, execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -70,13 +70,3 @@ export async function until<T>(what: string, step: () => Promise<T | undefined> 
 /** Fake-model script lines for a cook: one commit then a done report. */
 export const COMMIT_STEP = (file: string) => `STEP bash: echo ${file} > ${file} && git add ${file} && git commit -qm "add ${file}"`;
 export const REPORT_STEP = (status: string, summary: string) => `STEP tool chef_report ${JSON.stringify({ status, summary })}`;
-
-export function killStray(children: ChildProcess[]): void {
-  for (const c of children) {
-    try {
-      if (c.pid) process.kill(-c.pid, "SIGKILL");
-    } catch {
-      // already gone
-    }
-  }
-}

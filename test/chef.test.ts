@@ -53,7 +53,7 @@ function startPi(mode: "json" | "rpc", extra: string[], prompt?: string): { proc
       try {
         events.push(JSON.parse(line) as Event);
       } catch {
-        // stderr-like noise never reaches stdout in json or rpc mode; a torn line is kept in partial
+        // Not an event line.
       }
     }
   });
