@@ -1,6 +1,3 @@
-// The git facts chef needs, and nothing else. Every function is idempotent and
-// async, so a slow repository never stalls the Pi event loop.
-
 import { execFile } from "node:child_process";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { promisify } from "node:util";
@@ -29,7 +26,6 @@ async function ok(cwd: string, args: string[]): Promise<boolean> {
   }
 }
 
-/** Repository root and the branch tasks fork from. */
 export async function inspectRepo(path: string): Promise<{ root: string; baseBranch: string }> {
   if (!existsSync(path)) throw new ChefError(`${path} does not exist.`);
   const root = await git(path, ["rev-parse", "--show-toplevel"]);
@@ -39,7 +35,6 @@ export async function inspectRepo(path: string): Promise<{ root: string; baseBra
   return { root, baseBranch: remoteHead ? remoteHead.replace(/^origin\//, "") : "main" };
 }
 
-/** A base branch from the model must be a valid branch name and exist locally before it reaches any argv. */
 export async function verifyBaseBranch(repo: string, baseBranch: string): Promise<void> {
   if (!(await ok(repo, ["check-ref-format", "--branch", baseBranch]))) throw new ChefError(`"${baseBranch}" is not a valid branch name.`);
   if (!(await ok(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", `refs/heads/${baseBranch}`]))) {
@@ -47,8 +42,6 @@ export async function verifyBaseBranch(repo: string, baseBranch: string): Promis
   }
 }
 
-// An existing path can be a leftover directory or a different checkout. Neither
-// is permission to run a cook there (pstack worktree.ts assertWorktree).
 async function assertWorktree(repo: string, worktree: string): Promise<void> {
   const invalid = (why: string) => new ChefError(`${worktree} is not the task's worktree of ${repo}: ${why}.`);
   if (!lstatSync(worktree).isDirectory()) throw invalid("not a directory");
@@ -60,7 +53,6 @@ async function assertWorktree(repo: string, worktree: string): Promise<void> {
   if ((await common(worktree)) !== (await common(repo))) throw invalid("it belongs to another repository");
 }
 
-/** Creates `worktree` on `branch` from `baseBranch`, re-attaches an existing branch, or accepts the existing worktree. */
 export async function ensureWorktree(repo: string, worktree: string, branch: string, baseBranch: string): Promise<void> {
   if (!existsSync(worktree)) {
     await git(repo, ["worktree", "prune"]);
@@ -70,14 +62,6 @@ export async function ensureWorktree(repo: string, worktree: string, branch: str
   await assertWorktree(repo, worktree);
 }
 
-/**
- * dirtyFiles from `status --porcelain` (ignored files do not count), ahead from
- * `rev-list base..branch`, unlanded from `rev-list branch --not base --remotes`,
- * so a commit on a remote-tracking ref (as of the last fetch) counts as landed.
- * onBranch is false for a detached HEAD, another branch, or a rebase in
- * progress: commits made there are not on the task branch and would be lost
- * with the worktree. Missing worktree -> undefined.
- */
 export async function gitFacts(repo: string, worktree: string, branch: string, baseBranch: string): Promise<GitFacts | undefined> {
   if (!existsSync(worktree)) return undefined;
   const status = await git(worktree, ["status", "--porcelain"]);
@@ -88,31 +72,25 @@ export async function gitFacts(repo: string, worktree: string, branch: string, b
   return { dirtyFiles, ahead, unlanded, onBranch: head === branch };
 }
 
-/** `git diff --stat base...branch`, capped. */
 export async function diffstat(repo: string, branch: string, baseBranch: string): Promise<string> {
   const text = await git(repo, ["diff", "--stat", "--end-of-options", `${baseBranch}...${branch}`]).catch(() => "");
   const lines = text.split("\n");
   return lines.length > DIFFSTAT_LINES ? [...lines.slice(0, DIFFSTAT_LINES), `... ${lines.length - DIFFSTAT_LINES} more lines`].join("\n") : text;
 }
 
-/** What `removeWorktree` did. A missing worktree or branch is success. */
 export interface RemoveResult {
   worktree: "removed" | "missing";
   branch: "deleted" | "kept" | "missing";
 }
 
-/**
- * `worktree remove` (forced when discarding), then the branch goes only when
- * every commit on it is on the base branch, or when discarding. `branch -d`
- * is not used: it also deletes a branch whose upstream contains it, and a
- * remote-tracking ref can be stale after the remote branch was deleted.
- */
 export async function removeWorktree(repo: string, worktree: string, branch: string, baseBranch: string, discard: boolean): Promise<RemoveResult> {
   const hadWorktree = existsSync(worktree);
   if (hadWorktree) await git(repo, ["worktree", "remove", ...(discard ? ["--force"] : []), worktree]);
   await git(repo, ["worktree", "prune"]);
   if ((await git(repo, ["branch", "--list", "--end-of-options", branch])) === "") return { worktree: hadWorktree ? "removed" : "missing", branch: "missing" };
   const landed = discard || (await ok(repo, ["merge-base", "--is-ancestor", "--end-of-options", branch, baseBranch]));
+  // `branch -d` is not used: it also deletes a branch whose upstream contains it, and a
+  // remote-tracking ref can be stale after the remote branch was deleted.
   const deleted = landed && (await ok(repo, ["branch", "-D", "--end-of-options", branch]));
   return { worktree: hadWorktree ? "removed" : "missing", branch: deleted ? "deleted" : "kept" };
 }

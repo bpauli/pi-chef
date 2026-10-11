@@ -1,6 +1,3 @@
-// Chef e2e: a real `pi --mode rpc --chef` chef process on the fake model, which
-// launches real cooks. Proves activation by flag and the wake path on real Pi.
-
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
@@ -37,11 +34,9 @@ interface Event {
   result?: { content?: { type: string; text?: string }[] };
 }
 
-/** Starts a chef Pi and collects its JSON events with an LF-only splitter. */
 function startPi(mode: "json" | "rpc", extra: string[], prompt?: string): { proc: ChildProcess; events: Event[]; exited: Promise<number | null> } {
   const args = ["--mode", mode, "--no-session", "-ne", "-e", CHEF_ENTRY, "-e", FAKE_PROVIDER, "--model", FAKE_MODEL, ...extra];
   if (mode === "json") args.push("-p", prompt ?? "STEP say: hi");
-  // CHEF_TEST_PI runs the chef on another Pi build, such as the compiled binary users install.
   const bin = process.env.CHEF_TEST_PI;
   const proc = bin
     ? spawn(bin, args, { stdio: ["pipe", "pipe", "inherit"], env: { ...process.env } })
@@ -56,9 +51,7 @@ function startPi(mode: "json" | "rpc", extra: string[], prompt?: string): { proc
     for (const line of lines) {
       try {
         events.push(JSON.parse(line) as Event);
-      } catch {
-        // Not an event line.
-      }
+      } catch {}
     }
   });
   const exited = new Promise<number | null>((ok) => proc.on("exit", (code) => ok(code)));
@@ -132,7 +125,6 @@ test("a dispatch leads to exactly one chef-wake that starts a turn, and chef_res
   assert.equal(JSON.stringify(lastText?.message?.content), JSON.stringify([{ type: "text", text: "reviewed" }]));
 });
 
-/** A chef whose turn is busy in bash while its cook finishes, so the wake is queued as a follow-up. */
 async function chefBusyWhileCookFinishes(sleepSeconds: number) {
   tk = tempKitchen();
   const repo = makeRepo(tk.home, "api");
@@ -167,7 +159,6 @@ test("a wake queued behind a busy chef turn is delivered as a follow-up and mark
 
 test("a wake that Pi drops from its queue before delivery is derived and sent again after the turn settles", async () => {
   const { chef, store } = await chefBusyWhileCookFinishes(20);
-  // The waker sends within 5 s of the notice; by now the wake sits in Pi's follow-up queue.
   await new Promise((ok) => setTimeout(ok, 7000));
   chef.proc.stdin!.write(`${JSON.stringify({ id: "c1", type: "clear_queue" })}\n`);
   await until("the chef's turn to settle", () => (settles(chef.events) >= 1 ? true : undefined), 60_000);

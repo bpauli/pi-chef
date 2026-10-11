@@ -1,6 +1,3 @@
-// Kitchen e2e: real cook Pi processes on the fake model, a temp PI_CODING_AGENT_DIR
-// and CHEF_HOME. The test drives ticks itself; the chef shell owns the timer.
-
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -23,7 +20,6 @@ afterEach(async () => {
   tk.dispose();
 });
 
-/** Kills every cook of this kitchen that a test left behind. */
 async function reapCooks(store: Store): Promise<void> {
   const cooks = await scanCooks();
   for (const rec of store.snapshot(new RunTails(), new Set()).records) {
@@ -50,7 +46,6 @@ async function setup(config: Record<string, unknown> = {}, deps: Partial<Kitchen
   return { kitchen, store: new Store(tk.kitchenDir), repos };
 }
 
-/** Ticks until a notice for `task` arrives, then marks it, so the next tick is quiet. */
 async function waitNotice(kitchen: Kitchen, task: string, timeoutMs = 40_000): Promise<Notice> {
   const notice = await until(`notice for ${task}`, async () => {
     const report = await kitchen.tick();
@@ -395,7 +390,6 @@ test("a cook that exits before its first output line is a failed launch with the
   const run2 = readFileSync(store.runFile(view.spec.id, runNo(2)), "utf8");
   assert.match(run2, /# Add a/, "the brief travels with the retry since run 1 never delivered it");
   assert.match(run2, /retry/);
-  // The exit event and the tick that reads the empty claim race; both derive the same failure, so only the set is fixed.
   assert.deepEqual(store.readEvents(view.spec.id).map((e) => e.type).sort(), ["launch_failed", "notified", "notified"]);
 });
 
@@ -488,7 +482,6 @@ test("a launch rescans for a cook the owner does not know, so a liveness miss ne
   const first = await waitNotice(kitchen, id);
   assert.equal(first.outcome.kind, "failed", "no process anywhere: the run is dead");
 
-  // A cook for this session appears after the owner's one scan, as if the scan had raced its start.
   const ghost = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore", env: { ...process.env, CHEF_SESSION_ID: sid } });
   ghost.unref();
   await until("ghost cook", async () => ((await scanCooks()).get(sid) === ghost.pid ? true : undefined));

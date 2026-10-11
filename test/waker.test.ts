@@ -4,7 +4,6 @@ import type { Notice, TaskId } from "../extension/domain.ts";
 import { runNo } from "../extension/domain.ts";
 import { Waker } from "../extension/chef.ts";
 
-/** A manual clock: timers fire only when the test advances time. */
 function fakeClock() {
   let now = 0;
   let next = 1;

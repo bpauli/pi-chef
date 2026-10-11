@@ -1,7 +1,3 @@
-// Chef role: the Pi shell around the Kitchen. Tools as one-call adapters, the
-// /chef command, the board widget, the Waker, and activation. Logic stays in
-// kitchen.ts and derive.ts; this file maps Pi in and text out.
-
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -20,8 +16,6 @@ const BOARD_WIDTH = 160;
 const CHEF_ENTRY = fileURLToPath(new URL("./index.ts", import.meta.url));
 
 export const CHEF_TOOLS = ["chef_add_project", "chef_dispatch", "chef_board", "chef_send", "chef_stop", "chef_result", "chef_close"] as const;
-
-// ---------- Tool parameters ----------
 
 const AddProjectParams = Type.Object(
   {
@@ -52,15 +46,9 @@ const CloseParams = Type.Object(
 );
 const NoParams = Type.Object({}, { additionalProperties: false });
 
-// ---------- Wake path ----------
-
 const noticeKey = (n: NoticeRef): string => `${n.task}#${n.run}`;
 
 /**
- * Batches notices into one wake. The first notice opens a quiet window that
- * each new notice extends, capped from the first, so ten cooks finishing
- * together cost one chef turn. Dedupe key: task#run.
- *
  * A sent wake stays in flight until Pi reports its `message_end`, because a
  * wake sent mid-turn sits in Pi's follow-up queue, which Escape or an abort
  * drops. `notified` is written only on that `message_end`. Until then the tick
@@ -107,7 +95,6 @@ export class Waker {
     if (notices.length) this.deliver(notices);
   }
 
-  /** The wake carrying these notices reached the session. */
   delivered(notices: readonly NoticeRef[]): void {
     for (const n of notices) {
       this.inFlight.delete(noticeKey(n));
@@ -115,12 +102,10 @@ export class Waker {
     }
   }
 
-  /** The agent settled. A wake still in flight was dropped from Pi's queue and is free to be sent again. */
   settled(): void {
     this.inFlight.clear();
   }
 
-  /** Drops pending notices without delivering. They are not marked, so the next session derives them again. */
   dispose(): void {
     if (this.quiet) this.clock.clearTimeout(this.quiet);
     if (this.cap) this.clock.clearTimeout(this.cap);
@@ -129,8 +114,6 @@ export class Waker {
     this.inFlight.clear();
   }
 }
-
-// ---------- Install ----------
 
 interface ChefSession {
   reader: KitchenReader;
@@ -157,7 +140,6 @@ export function installChef(pi: ExtensionAPI): void {
     return on ? [...others, ...CHEF_TOOLS] : others;
   };
 
-  // The active branch only: an entry on an abandoned branch must not turn chef mode on.
   const chefModeOn = (ctx: ExtensionContext): boolean => {
     const entries = ctx.sessionManager.getBranch().filter((e) => e.type === "custom" && e.customType === "chef-mode");
     const last = entries.at(-1);
@@ -171,7 +153,6 @@ export function installChef(pi: ExtensionAPI): void {
       current.restart = undefined;
     });
 
-  // Two fast /chef calls share one open, so the kitchen is never opened twice.
   let opening: Promise<ChefSession> | undefined;
   const open = (ctx: ExtensionContext, takeover = false): Promise<ChefSession> => {
     if (session && !takeover) return Promise.resolve(session);
@@ -208,7 +189,6 @@ export function installChef(pi: ExtensionAPI): void {
     return current;
   };
 
-  // An error is shown when it starts, and again after it went away and came back.
   const showErrors = (s: ChefSession, ctx: ExtensionContext, errors: readonly string[]): void => {
     for (const err of errors) if (!s.lastErrors.has(err) && ctx.hasUI) ctx.ui.notify(`chef: ${err}`, "error");
     s.lastErrors = new Set(errors);
@@ -235,7 +215,6 @@ export function installChef(pi: ExtensionAPI): void {
           board = report.board;
         }
       } else {
-        // The owner quit or died: the first read-only session to find the lease free takes it.
         const promoted = await s.reader.promote();
         if (promoted) {
           s.owner = promoted;
@@ -277,7 +256,6 @@ export function installChef(pi: ExtensionAPI): void {
     if (pi.getFlag("chef") === true || chefModeOn(ctx)) await open(ctx);
   });
   pi.on("session_shutdown", () => close(undefined));
-  // The wake reached the session: now the notices count as delivered.
   pi.on("message_end", (event) => {
     const m = event.message;
     const s = session;
@@ -452,8 +430,6 @@ export function installChef(pi: ExtensionAPI): void {
   });
 }
 
-// ---------- Text ----------
-
 async function boardText(reader: KitchenReader): Promise<string> {
   const board = await reader.board();
   const projects = board.projects.length ? board.projects.map((p) => `${p.name}: ${p.path} (base ${p.baseBranch})`).join("\n") : "No projects. Register one with chef_add_project.";
@@ -464,13 +440,11 @@ async function boardText(reader: KitchenReader): Promise<string> {
 
 const RESULT_MAX = 4000;
 
-/** Keeps `text` within `max` characters, marking the cut. A budget too small for any content yields nothing. */
 function cut(text: string, max: number): string {
   if (text.length <= max) return text;
   return max < 20 ? "" : `${text.slice(0, max - 6)} [cut]`;
 }
 
-/** Head, body, branch facts, diffstat, transcript. The body and the diffstat are cut first: the paths and the facts must survive. */
 export function resultText(r: TaskResult, at: Millis): string {
   const { spec, state } = r.view;
   const age = state.kind === "idle" || state.kind === "cooking" ? ` ${formatAge(state.since, at)}` : "";

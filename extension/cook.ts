@@ -1,7 +1,3 @@
-// Cook role: loaded inside a cook process (CHEF_ROLE=cook). It adds chef_report,
-// the cook contract, and the inbox poller. The cook writes no chef file: Pi
-// writes runs/<n>.jsonl and the report travels in it as a tool_execution_end line.
-
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readFileSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
@@ -11,7 +7,6 @@ import { parseFile } from "./store.ts";
 
 const INBOX_POLL_MS = 300;
 
-/** The cook's half of the system prompt. Task values come from task.json, the rest is the same for every cook. */
 export function cookContract(spec: TaskSpec): string {
   return [
     `You are a cook in chef's kitchen: a Pi agent that works alone on task ${spec.id} "${spec.title}". No human watches this run.`,
@@ -77,7 +72,6 @@ export function installCook(pi: ExtensionAPI, env: NodeJS.ProcessEnv): void {
         text = readFileSync(join(inbox, file), "utf8");
         renameSync(join(inbox, file), join(inbox, "handled", file));
       } catch {
-        // The owner moved it first, or it is gone.
         continue;
       }
       pi.sendUserMessage(`Message from the chef:\n${text}`, { deliverAs: "steer" });

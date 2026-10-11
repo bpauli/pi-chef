@@ -1,6 +1,3 @@
-// Shared setup for the e2e tests: the fake model server, a temp kitchen with a
-// temp Pi agent dir, temp git repos, and polling helpers.
-
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -28,7 +25,6 @@ export interface TempKitchen {
   dispose(): void;
 }
 
-/** A fresh kitchen and agent dir. Sets PI_CODING_AGENT_DIR and CHEF_HOME so cooks inherit them. */
 export function tempKitchen(config: Record<string, unknown> = {}): TempKitchen {
   const home = mkdtempSync(join(tmpdir(), "chef-e2e-"));
   const kitchenDir = join(home, "kitchen");
@@ -58,7 +54,6 @@ export function makeRepo(dir: string, name: string): string {
 
 export const sleep = (ms: number): Promise<void> => new Promise((ok) => setTimeout(ok, ms));
 
-/** Polls `step` until it returns a value, or fails with `what` after `timeoutMs`. */
 export async function until<T>(what: string, step: () => Promise<T | undefined> | T | undefined, timeoutMs = 30_000, everyMs = 200): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -69,6 +64,5 @@ export async function until<T>(what: string, step: () => Promise<T | undefined> 
   }
 }
 
-/** Fake-model script lines for a cook: one commit then a done report. */
 export const COMMIT_STEP = (file: string) => `STEP bash: echo ${file} > ${file} && git add ${file} && git commit -qm "add ${file}"`;
 export const REPORT_STEP = (status: string, summary: string) => `STEP tool chef_report ${JSON.stringify({ status, summary })}`;

@@ -1,5 +1,3 @@
-// Package entry: the double-load guard and the role switch.
-
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { installCook } from "./cook.ts";
 import { ROLE_ENV } from "./cooks.ts";
@@ -20,7 +18,6 @@ export default async function chef(pi: ExtensionAPI): Promise<void> {
     installCook(pi, process.env);
     return;
   }
-  // The cook process never loads the chef half.
   const { installChef } = await import("./chef.ts");
   installChef(pi);
 }

@@ -1,6 +1,3 @@
-// The cook half against a fake extension API: events in, sendUserMessage and
-// inbox moves out. Real Pi timing for the same gate is in kitchen.test.ts.
-
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,7 +9,6 @@ import { ROLE_ENV, SESSION_ENV, TASK_DIR_ENV } from "../extension/cooks.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 
-/** Records handlers and messages. Only the surface installCook touches. */
 function fakePi() {
   const handlers = new Map<string, Handler[]>();
   const sent: { text: string; deliverAs: string | undefined }[] = [];

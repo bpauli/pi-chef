@@ -64,8 +64,6 @@ const settledDone = (summary = "ok"): RunFacts => ({ ...EMPTY_RUN, settled: true
 const live = (sid = "sid-1", pid = 4242): Map<string, Pid> => new Map([[sid, pid as Pid]]);
 const none = new Map<string, Pid>();
 
-// ---- ids ----
-
 test("parseTaskId accepts case and spaces, resolves a unique bare sequence, and lists known ids on a miss", () => {
   const known = [id("api-7"), id("web-2")];
   assert.equal(parseTaskId(" API-7 ", known), "api-7");
@@ -96,8 +94,6 @@ test("slugProjectName refuses a name with no letters or digits and asks for an e
   assert.throws(() => slugProjectName("..."), (e) => e instanceof ChefError && /explicit name/.test(e.message));
   assert.throws(() => slugProjectName("\u00e4\u00f6"), ChefError);
 });
-
-// ---- foldRunLine over recorded Pi streams ----
 
 test("a recorded run that ends with chef_report done yields the report, the start time, and settled", () => {
   const lines = fixture("done");
@@ -179,8 +175,6 @@ test("tool_execution_start sets the activity to the tool and its argument, cappe
   assert.equal(activityDetail("bash", { command: "npm  test" }), "npm test");
   assert.equal(activityDetail("read", { path: "README.md" }), "README.md");
 });
-
-// ---- outcomeOf and deriveTask: one row per edge ----
 
 test("a live process on an unsettled run is cooking, even while the run file is still empty", () => {
   const rec = record({ runs: [run(1, {}, { bytes: 0 })] });
@@ -310,8 +304,6 @@ test("a task with no runs and no events is queued(new)", () => {
   assert.deepEqual(deriveTask(record(), none, NOW).state, { kind: "queued", why: "new" });
 });
 
-// ---- noticeFor ----
-
 test("no notice for stopped outcomes, notified runs, or a task with a pending relaunch", () => {
   const due = record({ runs: [run(1, settledDone("x"))] });
   assert.equal(noticeFor(due, deriveTask(due, none, NOW))?.run, 1);
@@ -322,8 +314,6 @@ test("no notice for stopped outcomes, notified runs, or a task with a pending re
   const relaunch = record({ runs: [run(1, settledDone())], pendingAt: [millis(5)] });
   assert.equal(noticeFor(relaunch, deriveTask(relaunch, none, NOW)), undefined);
 });
-
-// ---- plan ----
 
 const base = { live: none, now: NOW, cap: 3, killGraceMs: 5000, exitGraceMs: 10_000, reclaimAfterMs: 30_000 };
 
@@ -412,8 +402,6 @@ test("plan emits one notify per idle task with an unnotified final outcome", () 
   assert.deepEqual(actions[0]!.kind === "notify" && actions[0]!.notice.outcome, { kind: "done", summary: "added f", reported: true });
 });
 
-// ---- closeVerdict ----
-
 test("close refuses dirty or unlanded work unless discard, and names the counts", () => {
   const idle = deriveTask(record({ runs: [run(1, settledDone())] }), none, NOW).state;
   const refused = closeVerdict(id("api-1"), idle, { dirtyFiles: 2, ahead: 3, unlanded: 3, onBranch: true }, false);
@@ -435,8 +423,6 @@ test("close of a cooking task or a task with an undelivered message is refused w
   assert.equal(closeVerdict(id("api-1"), relaunching, undefined, true).ok, true);
   assert.deepEqual(closeVerdict(id("api-1"), { kind: "closed", at: NOW, discarded: false }, undefined, false), { ok: true });
 });
-
-// ---- text ----
 
 test("formatWake renders the kitchen update the chef model reads, with the next tool per outcome", () => {
   const text = formatWake([

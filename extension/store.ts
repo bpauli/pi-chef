@@ -1,6 +1,3 @@
-// The kitchen on disk. This module is the only one that knows the layout. One
-// writer per file; see docs/design.md "Files and writers".
-
 import { randomBytes } from "node:crypto";
 import {
   appendFileSync,
@@ -53,12 +50,10 @@ export interface Snapshot {
   projects: Project[];
   records: TaskRecord[];
   broken: BrokenTask[];
-  /** One line per file that did not parse, for the chef's error channel. */
   problems: string[];
 }
 
 export interface InboxMessage {
-  /** Basename, sortable: `<epoch ms, 13 digits>-<4 hex>.msg`. */
   file: string;
   at: Millis;
   text: string;
@@ -72,7 +67,6 @@ function isCode(e: unknown, code: string): boolean {
   return (e as NodeJS.ErrnoException).code === code;
 }
 
-/** Parses one external JSON document against its schema. The error names the file and the field. */
 export function parseFile<T extends TSchema>(schema: T, path: string, raw: string): Static<T> {
   let json: unknown;
   try {
@@ -131,9 +125,6 @@ export class Store {
     for (const sub of ["projects", "tasks", "worktrees"]) mkdirSync(join(this.dir, sub), { recursive: true });
   }
 
-  // ----- config and projects -----
-
-  /** A bad config.json yields the defaults plus the error, so one typo never stops the kitchen. */
   loadConfig(): { config: Config; error: string | undefined } {
     const path = join(this.dir, "config.json");
     if (!existsSync(path)) return { config: DEFAULT_CONFIG, error: undefined };
@@ -152,7 +143,6 @@ export class Store {
     return this.loadConfig().config;
   }
 
-  /** Every project file that parses. `snapshot` reports the ones that do not. */
   readProjects(): Project[] {
     return this.loadProjects().projects;
   }
@@ -172,11 +162,6 @@ export class Store {
     return { projects, problems };
   }
 
-  /**
-   * Everything one tick reads, each file in isolation: a task whose files do not
-   * parse is listed as broken, a bad config or project file is a problem line,
-   * and the rest of the kitchen goes on.
-   */
   snapshot(tails: RunTails, skip: ReadonlySet<TaskId>): Snapshot {
     const { config, error } = this.loadConfig();
     const { projects, problems } = this.loadProjects();
@@ -204,7 +189,6 @@ export class Store {
     return { ...file, name: file.name as ProjectName, addedAt: millis(file.addedAt) };
   }
 
-  /** O_EXCL. The same name with the same path is returned as is; another path is an error. */
   addProject(p: Project): Project {
     this.ensureLayout();
     try {
@@ -218,8 +202,6 @@ export class Store {
     }
   }
 
-  // ----- tasks -----
-
   listTaskIds(): TaskId[] {
     const dir = join(this.dir, "tasks");
     if (!existsSync(dir)) return [];
@@ -229,7 +211,6 @@ export class Store {
       .map((f) => f as TaskId);
   }
 
-  /** `<project>-<max existing seq + 1>`, from the task directory names. */
   nextTaskId(project: ProjectName): TaskId {
     const re = new RegExp(`^${project}-(\\d+)$`);
     const dir = join(this.dir, "tasks");
@@ -237,7 +218,6 @@ export class Store {
     return `${project}-${Math.max(0, ...seqs) + 1}` as TaskId;
   }
 
-  /** Returns false when the id is taken (a racing dispatch): retry with the next id. */
   createTask(spec: TaskSpec): boolean {
     this.ensureLayout();
     const dir = this.taskDir(spec.id);
@@ -248,7 +228,6 @@ export class Store {
       throw e;
     }
     for (const sub of ["runs", join("inbox", "handled"), "session"]) mkdirSync(join(dir, sub), { recursive: true });
-    // The mkdir above is the exclusive step; the rename makes the file whole or absent.
     writeAtomic(join(dir, "task.json"), `${JSON.stringify(spec, null, 2)}\n`);
     return true;
   }
@@ -273,14 +252,11 @@ export class Store {
       try {
         const json: unknown = JSON.parse(line);
         if (Value.Check(TaskEventSchema, json)) events.push(json);
-      } catch {
-        // A torn last line from a crash mid-append is skipped, never fatal.
-      }
+      } catch {}
     }
     return events;
   }
 
-  /** Reads one task into the record derive.ts consumes. `tails` carries incremental readers across ticks. */
   loadRecord(id: TaskId, tails: RunTails): TaskRecord {
     const spec = this.readSpec(id);
     const runsDir = join(this.taskDir(id), "runs");
@@ -331,8 +307,6 @@ export class Store {
     }
   }
 
-  // ----- launch files -----
-
   writePrompt(id: TaskId, n: RunNo, text: string): void {
     writeAtomic(this.runPrompt(id, n), text);
   }
@@ -342,11 +316,6 @@ export class Store {
     return existsSync(path) ? readFileSync(path, "utf8") : undefined;
   }
 
-  /**
-   * Claims run n by creating runs/<n>.jsonl with O_EXCL. EEXIST means another
-   * launch won. The err file is appended, so a relaunch of the same run never
-   * erases the diagnostic of the attempt before it.
-   */
   claimRun(id: TaskId, n: RunNo): { stdout: number; stderr: number } | undefined {
     let stdout: number;
     try {
@@ -363,7 +332,6 @@ export class Store {
     }
   }
 
-  /** Size of runs/<n>.jsonl, undefined when it does not exist. */
   runBytes(id: TaskId, n: RunNo): number | undefined {
     try {
       return statSync(this.runFile(id, n)).size;
@@ -372,7 +340,6 @@ export class Store {
     }
   }
 
-  /** Removes an empty claim left by an interrupted launch. A claim with content stays. */
   releaseEmptyClaim(id: TaskId, n: RunNo): boolean {
     const path = this.runFile(id, n);
     try {
@@ -385,9 +352,6 @@ export class Store {
     }
   }
 
-  // ----- inbox -----
-
-  /** tmp plus rename, so the cook's `*.msg` glob never sees a partial file. */
   postMessage(id: TaskId, text: string, at: Millis): InboxMessage {
     const dir = this.inboxDir(id);
     mkdirSync(join(dir, "handled"), { recursive: true });
@@ -408,14 +372,12 @@ export class Store {
       try {
         out.push({ file, at: millis(Number(m[1])), text: readFileSync(join(dir, file), "utf8") });
       } catch (e) {
-        // The cook moved it between readdir and read.
         if (!isCode(e, "ENOENT")) throw e;
       }
     }
     return out;
   }
 
-  /** Moves messages into handled/. ENOENT is fine: the cook moved it first. */
   moveToHandled(id: TaskId, files: readonly string[]): void {
     const dir = this.inboxDir(id);
     for (const file of files) {
@@ -426,8 +388,6 @@ export class Store {
       }
     }
   }
-
-  // ----- lease -----
 
   readLease(): Lease | undefined {
     const path = this.lockFile();
@@ -449,7 +409,6 @@ export class Store {
   }
 }
 
-/** Incremental readers keyed by run file path. Owned by one Kitchen, reused across ticks. */
 export class RunTails {
   private readonly tails = new Map<string, RunTail>();
   get(path: string): RunTail {
@@ -460,7 +419,6 @@ export class RunTails {
     }
     return tail;
   }
-  /** Closed tasks drop their tails to keep memory flat. */
   forget(pathPrefix: string): void {
     for (const path of this.tails.keys()) if (path.startsWith(pathPrefix)) this.tails.delete(path);
   }
@@ -468,11 +426,6 @@ export class RunTails {
 
 const CHUNK = 64 * 1024;
 
-/**
- * Reads only the bytes appended since the last poll, splits on LF only (U+2028 is
- * legal inside a JSON string), keeps a partial last line and a split multi-byte
- * character for the next poll, and folds each complete line.
- */
 export class RunTail {
   private offset = 0;
   private partial = "";
@@ -508,6 +461,7 @@ export class RunTail {
   }
 
   private feed(text: string): void {
+    // LF only: U+2028 is legal inside a JSON string.
     const lines = (this.partial + text).split("\n");
     this.partial = lines.pop() ?? "";
     for (const line of lines) if (line) this.facts = foldRunLine(this.facts, line);

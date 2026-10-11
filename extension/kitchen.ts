@@ -1,7 +1,3 @@
-// The Kitchen is chef's one deep module. Tools and /chef call it; it knows
-// nothing about Pi. Every mutating operation ends with a tick, so "launch now or
-// queue" has one code path and restart reconciliation is the first tick.
-
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -33,16 +29,11 @@ export interface KitchenDeps {
   store: Store;
   pi: PiInvocation;
   chefEntry: string;
-  /** The Pi session that asks to own the kitchen. */
   self: { pid: Pid; sessionId: string };
   now?: () => Millis;
-  /** SIGKILL this long after a SIGTERM. Default 5000. */
   killGraceMs?: number;
-  /** SIGTERM a cook still alive this long after its run settled. Default 10000. */
   exitGraceMs?: number;
-  /** Reclaim an empty claim only when it is older than this. Default 30000. */
   reclaimAfterMs?: number;
-  /** How long `send` waits for a reported cook to exit before it answers `exiting`. Default 5000. */
   exitWaitMs?: number;
 }
 
@@ -59,17 +50,13 @@ export type Delivery =
   | { kind: "steer" }
   | { kind: "relaunched"; run: RunNo }
   | { kind: "queued"; position: number }
-  /** The last cook reported and has not exited within `exitWaitMs`. The tick relaunches when it does. */
   | { kind: "exiting" }
-  /** The cook was stopped and is exiting. The message relaunches the task when it has. */
   | { kind: "after-stop" }
-  /** The relaunch with the message failed on the spot. */
   | { kind: "launch-failed"; reason: string };
 
 export interface TaskResult {
   view: TaskView;
   project: Project | undefined;
-  /** Undefined when the worktree is gone. */
   git: GitFacts | undefined;
   diffstat: string;
   finalText: string | undefined;
@@ -80,16 +67,13 @@ export type TickReport = { kind: "ok"; board: Board; notices: Notice[]; errors: 
 
 export type Opened = { kind: "owner"; kitchen: Kitchen } | { kind: "read-only"; reader: KitchenReader; holder: Holder };
 
-/** What a session without the lease can do: look. */
 export class KitchenReader {
   protected readonly deps: KitchenDeps;
   protected readonly store: Store;
   protected readonly tails = new RunTails();
   protected readonly cooks = new CookTable();
   protected readonly now: () => Millis;
-  // Runs whose liveness was checked once with a full ps scan, so a dead run never triggers another.
   private readonly scanned = new Set<string>();
-  // Closed tasks whose worktree is gone never change again.
   private readonly finished = new Set<TaskId>();
 
   constructor(deps: KitchenDeps) {
@@ -115,12 +99,10 @@ export class KitchenReader {
     return this.store.listTaskIds();
   }
 
-  /** The session that holds the lease now, from pass.lock. */
   holder(): Holder | undefined {
     return holderOf(this.store.readLease());
   }
 
-  /** Takes a free or stale lease and returns the owner for this session. Undefined while a live holder keeps it. */
   async promote(): Promise<Kitchen | undefined> {
     if (await acquireLease(this.store, this.deps.self, false)) return undefined;
     const kitchen = new Kitchen(this.deps);
@@ -157,12 +139,6 @@ export class KitchenReader {
     return this.store.snapshot(this.tails, this.finished);
   }
 
-  /**
-   * Cheap per tick: kill(0) plus an environment check per known pid. A claimed,
-   * unsettled run with no known pid gets one full scan, which adopts a cook
-   * another session launched. After that scan a missing process is dead, until
-   * a launch for the task rescans (see `launch`).
-   */
   protected async liveCooks(records: readonly TaskRecord[]): Promise<LiveCooks> {
     let live = await this.cooks.live();
     const candidates = new Set<string>();
@@ -219,11 +195,6 @@ export class KitchenReader {
 export class Kitchen extends KitchenReader {
   private chain: Promise<unknown> = Promise.resolve();
 
-  /**
-   * Every write runs here, one at a time with the tick, in the order lease check,
-   * read, decide, write, tick. A lost lease is found before the first write, and
-   * no interval tick can change a task between the decision and the write.
-   */
   private mutate<T>(op: () => Promise<T>): Promise<T> {
     const next = this.chain.then(() => {
       if (!leaseIsMine(this.store, this.deps.self)) throw lostError(holderOf(this.store.readLease()));
@@ -233,14 +204,11 @@ export class Kitchen extends KitchenReader {
     return next;
   }
 
-  /** Verify lease, load records, liveness, plan, execute. Serialized: a tick never overlaps a mutation. */
   tick(): Promise<TickReport> {
     const next = this.chain.then(() => this.runTick());
     this.chain = next.catch(() => undefined);
     return next;
   }
-
-  // ---------- operations ----------
 
   addProject(input: { path: string; name?: string; note?: string; baseBranch?: string }): Promise<Project> {
     return this.mutate(async () => {
@@ -251,7 +219,6 @@ export class Kitchen extends KitchenReader {
     });
   }
 
-  /** Writes task.json, then the tick launches it or leaves it queued. */
   dispatch(input: DispatchInput): Promise<TaskView> {
     return this.mutate(async () => {
       const project = this.requireProject(input.project);
@@ -278,12 +245,6 @@ export class Kitchen extends KitchenReader {
     });
   }
 
-  /**
-   * One way to talk to a task: steer if cooking, relaunch with the message if idle.
-   * A cook that reported and is still exiting blocks the relaunch (plan waits for
-   * the exit), so send ticks until the exit or `exitWaitMs`, and never reads that
-   * wait as the cap holding the task.
-   */
   send(task: TaskId, text: string): Promise<Delivery> {
     return this.mutate(async () => {
       const rec = this.store.loadRecord(task, this.tails);
@@ -296,9 +257,7 @@ export class Kitchen extends KitchenReader {
         if (report.kind === "lost") throw lostError(report.holder);
         const state = report.board.open.find((v) => v.spec.id === task)?.state;
         if (state?.kind === "cooking") {
-          // A stopped cook no longer reads its inbox; the message relaunches the task once it has exited.
           if (rec.events.some((e) => e.type === "stop" && e.run === state.run)) return { kind: "after-stop" };
-          // The same run with output is still the cook that was there (or one the launch rescan found): the message steers it.
           const last = rec.runs.at(-1);
           const sameRun = last !== undefined && last.n === state.run && last.bytes > 0;
           return sameRun ? { kind: "steer" } : { kind: "relaunched", run: state.run };
@@ -312,7 +271,6 @@ export class Kitchen extends KitchenReader {
     });
   }
 
-  /** Stops the live run, or holds a queued task. The tick escalates to SIGKILL. */
   stop(task: TaskId): Promise<{ view: TaskView; signalled: boolean }> {
     return this.mutate(async () => {
       const rec = this.store.loadRecord(task, this.tails);
@@ -321,7 +279,6 @@ export class Kitchen extends KitchenReader {
     });
   }
 
-  /** A cooking run gets a stop event and SIGTERM; a queued task is held; a settled cook that is still alive gets SIGTERM. */
   private async stopNow(rec: TaskRecord, live: LiveCooks): Promise<boolean> {
     const task = rec.spec.id;
     const { state } = deriveTask(rec, live, this.now());
@@ -333,11 +290,6 @@ export class Kitchen extends KitchenReader {
     return true;
   }
 
-  /**
-   * Refuses unless closeVerdict says ok. Order makes it crash-safe: stop a live
-   * cook when discarding, append `closed`, then remove the worktree and report
-   * what git did. A removal that fails here is retried by every tick.
-   */
   close(task: TaskId, discard: boolean): Promise<{ view: TaskView; removal: RemoveResult | { error: string } }> {
     return this.mutate(async () => {
       const rec = this.store.loadRecord(task, this.tails);
@@ -362,19 +314,15 @@ export class Kitchen extends KitchenReader {
     });
   }
 
-  /** Marks `notified` for each delivered notice. Called by the shell after the wake is delivered. */
   markNotified(notices: readonly NoticeRef[]): Promise<void> {
     return this.mutate(async () => {
       for (const n of notices) this.store.appendEvent(n.task, { type: "notified", at: this.now(), run: n.run });
     });
   }
 
-  /** Deletes pass.lock while it names this session. Cooks keep running. */
   release(): void {
     if (leaseIsMine(this.store, this.deps.self)) this.store.removeLease();
   }
-
-  // ---------- the tick ----------
 
   private async runTick(): Promise<TickReport> {
     if (!leaseIsMine(this.store, this.deps.self)) return { kind: "lost", holder: holderOf(this.store.readLease()) };
@@ -395,7 +343,6 @@ export class Kitchen extends KitchenReader {
         errors.push(`${action.kind} ${"task" in action ? action.task : ""}: ${(e as Error).message}`);
       }
     }
-    // A launch attempt changes the views this tick reports: the board shows the cook or the failure, not the queue.
     const fresh = launched ? plan(this.planInput(this.snapshot().records, await this.cooks.live(), cap)).views : views;
     return { kind: "ok", board: this.boardOf(fresh, snap, "owner", holderOf(this.store.readLease())), notices, errors };
   }
@@ -423,8 +370,6 @@ export class Kitchen extends KitchenReader {
   }
 
   private async launch(action: Extract<Action, { kind: "launch" }>, spec: TaskSpec): Promise<void> {
-    // The per-tick liveness check scans once per dead-looking run. A launch is rare
-    // and a second cook on one session is costly, so it scans again right before.
     await this.cooks.adopt();
     if ((await this.cooks.live()).has(spec.sessionId)) return;
     const project = this.requireProject(spec.project);
@@ -458,11 +403,6 @@ export class Kitchen extends KitchenReader {
     if (pid !== undefined) this.cooks.record(spec.sessionId, pid);
   }
 
-  /**
-   * A cook that exits before its first output line failed to launch (a bad model,
-   * a broken extension, a missing binary). Recording it stops the tick from
-   * respawning it every second. A run that produced output follows the file rules.
-   */
   private cookEnded(task: TaskId, run: RunNo, end: CookEnd): void {
     const reason = end.kind === "error" ? end.message : `cook exited with ${end.signal ?? `code ${end.code}`} before its first output line`;
     void this.mutate(async () => {
@@ -470,7 +410,6 @@ export class Kitchen extends KitchenReader {
     }).catch(() => undefined);
   }
 
-  /** Inside a mutation: the tick body runs directly, the chain is already held. */
   private async viewAfterTick(task: TaskId): Promise<TaskView> {
     const report = await this.runTick();
     if (report.kind === "lost") throw lostError(report.holder);
@@ -494,17 +433,10 @@ export function lostError(holder: Holder | undefined): ChefError {
   return new ChefError(`${who}. You can read the board and results here. Run /chef takeover to move the kitchen to this session.`);
 }
 
-// ---------- Lease ----------
-
 function holderOf(lease: ReturnType<Store["readLease"]>): Holder | undefined {
   return lease ? { pid: lease.pid as Pid, sessionId: lease.sessionId } : undefined;
 }
 
-/**
- * Self-healing: no lease, an unreadable one, or a holder whose pid is dead or
- * whose start time differs is replaced. A live foreign holder wins unless
- * `takeover`. Returns the holder when this session does not get the lease.
- */
 export async function acquireLease(store: Store, self: KitchenDeps["self"], takeover: boolean): Promise<Holder | undefined> {
   const lease = store.readLease();
   if (lease && !(lease.pid === self.pid && lease.sessionId === self.sessionId)) {

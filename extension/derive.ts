@@ -1,6 +1,3 @@
-// Pure kitchen logic. No fs, no processes, no Pi. Restart reconciliation is not
-// a code path of its own: it is the first call of `plan`.
-
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import {
@@ -22,13 +19,10 @@ import {
   runNo,
 } from "./domain.ts";
 
-// ---------- Run facts: a fold over one run's Pi JSONL stream ----------
-
 export interface RunFacts {
   startedAt: Millis | undefined;
   lastAt: Millis | undefined;
   settled: boolean;
-  /** The run's prompt reached the session as a user message, so the session holds the brief. */
   prompted: boolean;
   activity: Activity;
   report: CookReport | undefined;
@@ -47,7 +41,6 @@ export const EMPTY_RUN: RunFacts = {
   providerError: undefined,
 };
 
-// Only the fields chef reads. Value.Check ignores extra fields.
 const TimedMessageLine = Type.Object({ type: Type.Literal("message_end"), message: Type.Object({ timestamp: Type.Number() }) });
 const TurnStartLine = Type.Object({ type: Type.Literal("turn_start") });
 const ToolStartLine = Type.Object({ type: Type.Literal("tool_execution_start"), toolName: Type.String(), args: Type.Unknown() });
@@ -88,7 +81,6 @@ export function foldRunLine(facts: RunFacts, line: string): RunFacts {
   if (Value.Check(ToolEndLine, parsed)) {
     const content = parsed.result.structuredContent;
     const isReport = parsed.toolName === "chef_report" && !parsed.isError && Value.Check(CookReportSchema, content);
-    // A report and a provider error are two verdicts on the run: the later one in the stream wins.
     return isReport ? { ...facts, activity: { kind: "thinking" }, report: content, providerError: undefined } : { ...facts, activity: { kind: "thinking" } };
   }
   if (Value.Check(AssistantEndLine, parsed)) {
@@ -110,7 +102,6 @@ export function foldRunLine(facts: RunFacts, line: string): RunFacts {
 
 const DETAIL_MAX = 60;
 
-/** `npm test` for bash, the path for file tools, else the arguments; one line, capped. */
 export function activityDetail(tool: string, args: unknown): string {
   const a = (args ?? {}) as Record<string, unknown>;
   const pick = tool === "bash" ? a.command : (a.path ?? a.file_path ?? a.pattern);
@@ -123,35 +114,25 @@ export function oneLine(text: string, max: number): string {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
-// ---------- Task records: what the store hands to derive ----------
-
 export interface RunRecord {
   n: RunNo;
-  /** runs/<n>.jsonl exists. A prompt without it is an interrupted launch. */
   claimed: boolean;
-  /** Size of runs/<n>.jsonl. Zero with no live process and an empty err file is an interrupted launch. */
   bytes: number;
-  /** Modification time of runs/<n>.jsonl, undefined when unclaimed. For an empty claim this is the claim time. */
   claimedAt: Millis | undefined;
   facts: RunFacts;
-  /** Tail of runs/<n>.err, read for every claimed run that has not settled. */
   stderrTail: string;
 }
 
 export interface TaskRecord {
   spec: TaskSpec;
   events: readonly TaskEvent[];
-  /** Ascending by n, one per runs/<n>.prompt.md. */
   runs: readonly RunRecord[];
-  /** Creation time of each inbox/*.msg still pending, from its file name. */
   pendingAt: readonly Millis[];
   worktreeExists: boolean;
 }
 
-/** Live cook processes, keyed by the `CHEF_SESSION_ID` in their environment. */
 export type LiveCooks = ReadonlyMap<string, Pid>;
 
-/** The last launch attempt produced no output. Its run number is used up. */
 export interface LaunchFailure {
   run: RunNo;
   at: Millis;
@@ -164,22 +145,13 @@ interface Folded {
   lastStop: Extract<TaskEvent, { type: "stop" }> | undefined;
   closed: Extract<TaskEvent, { type: "closed" }> | undefined;
   launchFailure: LaunchFailure | undefined;
-  /** A message newer than the last stop or launch failure resumes a held task. */
   resumable: boolean;
-  /** The last stop names the run that would launch next, and nothing newer resumes it. */
   held: boolean;
-  /** Some run delivered its prompt, so the session holds the brief and a relaunch sends only messages. */
   briefDelivered: boolean;
 }
 
 const errTail = (text: string): string => text.trim().split("\n").filter(Boolean).slice(-3).join(" ");
 
-/**
- * From the owner's `launch_failed` event for a run that never started, or from
- * the files alone: an empty claim with a dead process and a non-empty err file.
- * The event wins when both name the same run; the files alone cover a failure
- * that happened while no owner ran.
- */
 function launchFailureOf(rec: TaskRecord, last: RunRecord | undefined): LaunchFailure | undefined {
   const event = rec.events.filter((e) => e.type === "launch_failed").at(-1);
   const emptyClaim = last !== undefined && last.claimed && last.bytes === 0 ? last : undefined;
@@ -199,13 +171,10 @@ function fold(rec: TaskRecord): Folded {
   const lastStop = rec.events.filter((e) => e.type === "stop").at(-1);
   const closed = rec.events.find((e) => e.type === "closed");
   const launchFailure = launchFailureOf(rec, last);
-  // An interrupted launch (an empty claim with an empty err file) is relaunched as
-  // the same run. A failed launch used its number up, so the retry is the next run.
   const started = last !== undefined && last.claimed && last.bytes > 0;
   const fromRuns = last === undefined ? 1 : started ? last.n + 1 : last.n;
   const nextRun = runNo(Math.max(fromRuns, launchFailure ? launchFailure.run + 1 : 1));
   const holdAt = Math.max(lastStop?.at ?? Number.NEGATIVE_INFINITY, launchFailure?.at ?? Number.NEGATIVE_INFINITY);
-  // Same millisecond: the chain wrote the hold first, so the message is the newer fact.
   const resumable = rec.pendingAt.some((at) => at >= holdAt);
   return {
     last,
@@ -223,18 +192,6 @@ export function nextRunOf(rec: TaskRecord): RunNo {
   return fold(rec).nextRun;
 }
 
-/**
- * The state machine. First match wins:
- *   closed event                                   -> closed
- *   live process and the last run is not settled   -> cooking
- *   the last launch failed                         -> idle(failed), or queued(message) when a newer message resumes it
- *   last run has no run file, or an empty one      -> queued(interrupted-launch), or idle(stopped) when held
- *   a message newer than the last stop             -> queued(message)
- *   no runs                                        -> queued(new), or idle(stopped) when held
- *   otherwise                                      -> idle(outcomeOf(last run))
- * `settled` beats liveness, so a run whose process is still exiting is idle. The
- * launch guard in `plan` still waits for the exit.
- */
 export function deriveTask(rec: TaskRecord, live: LiveCooks, now: Millis): TaskView {
   const view = (state: TaskState): TaskView => ({ spec: rec.spec, state });
   const { last, lastStop, closed, launchFailure, resumable, held } = fold(rec);
@@ -256,7 +213,6 @@ export function deriveTask(rec: TaskRecord, live: LiveCooks, now: Millis): TaskV
   return view({ kind: "idle", run: last.n, since, outcome: outcomeOf(last, lastStop?.run === last.n) });
 }
 
-/** How an ended run ended. Total over RunRecord, so every run has one outcome. */
 export function outcomeOf(run: RunRecord, stopped: boolean): Outcome {
   const { facts } = run;
   if (!facts.settled) {
@@ -276,11 +232,6 @@ export function outcomeOf(run: RunRecord, stopped: boolean): Outcome {
   return { kind: "done", summary: facts.finalText ?? "(no final text)", reported: false };
 }
 
-/**
- * A notice is due when the task is idle on run n with an outcome other than
- * stopped and no `notified` event names n. A pending relaunch makes the task
- * queued, so it never has a notice.
- */
 export function noticeFor(rec: TaskRecord, view: TaskView): Notice | undefined {
   const { state } = view;
   if (state.kind !== "idle" || state.run === undefined || state.outcome.kind === "stopped") return undefined;
@@ -289,10 +240,7 @@ export function noticeFor(rec: TaskRecord, view: TaskView): Notice | undefined {
   return { task: rec.spec.id, title: rec.spec.title, run, outcome: state.outcome };
 }
 
-// ---------- Convergence: one plan per tick ----------
-
 export type Action =
-  /** `prompt` is `brief` until a run has delivered it, `existing` for an interrupted launch, else `messages`. */
   | { kind: "launch"; task: TaskId; run: RunNo; prompt: "brief" | "messages" | "existing"; reclaim: boolean }
   | { kind: "signal"; task: TaskId; pid: Pid; signal: "SIGTERM" | "SIGKILL" }
   | { kind: "remove-worktree"; task: TaskId; discard: boolean }
@@ -303,19 +251,11 @@ export interface PlanInput {
   live: LiveCooks;
   now: Millis;
   cap: number;
-  /** SIGKILL this long after the SIGTERM of a stop, a close, or a stuck exit. */
   killGraceMs: number;
-  /** A cook still alive this long after its run settled gets SIGTERM. */
   exitGraceMs: number;
-  /** An empty claim is reclaimed only when it is older than this, so a launch in progress elsewhere is not undone. */
   reclaimAfterMs: number;
 }
 
-/**
- * Everything the owner must do to converge. Running a plan twice is safe: the
- * executor claims a launch with O_EXCL, a signal re-checks identity, worktree
- * removal accepts a missing path, and notify is marked only after delivery.
- */
 export function plan(input: PlanInput): { views: TaskView[]; actions: Action[] } {
   const { live, now, killGraceMs, exitGraceMs, reclaimAfterMs } = input;
   const views: TaskView[] = [];
@@ -345,7 +285,6 @@ export function plan(input: PlanInput): { views: TaskView[]; actions: Action[] }
     if (state.kind === "queued") queued.push({ rec, view });
     const notice = noticeFor(rec, view);
     if (notice) actions.push({ kind: "notify", notice });
-    // A settled run whose process has not exited: the task is idle, and after the exit grace the owner ends the process.
     if (pid !== undefined && last?.facts.settled) {
       const settledAt = last.facts.lastAt ?? last.claimedAt ?? now;
       if (now - settledAt > exitGraceMs) actions.push({ kind: "signal", task: rec.spec.id, pid, signal: escalate(settledAt + exitGraceMs) });
@@ -367,16 +306,10 @@ export function plan(input: PlanInput): { views: TaskView[]; actions: Action[] }
   return { views, actions };
 }
 
-// ---------- Close gate ----------
-
 export interface GitFacts {
-  /** `git status --porcelain` entries. Ignored files do not count. */
   dirtyFiles: number;
-  /** Commits on the branch not on the base branch. */
   ahead: number;
-  /** Commits on the branch reachable from neither the base branch nor any remote-tracking ref. */
   unlanded: number;
-  /** The worktree HEAD is the task branch. False for a detached HEAD, another branch, or a rebase in progress. */
   onBranch: boolean;
 }
 
@@ -403,8 +336,6 @@ export function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
-// ---------- Text the chef model and the human read ----------
-
 export interface RestartNote {
   cooking: number;
   finished: number;
@@ -412,7 +343,6 @@ export interface RestartNote {
 
 const SUMMARY_MAX = 400;
 
-/** One line, capped, ending in a sentence mark so the next sentence does not run into it. */
 const sentence = (text: string): string => {
   const flat = oneLine(text, SUMMARY_MAX);
   return /[.!?…]$/.test(flat) ? flat : `${flat}.`;
@@ -433,7 +363,6 @@ export function noticeLine(n: Notice): string {
   }
 }
 
-/** 1-based place of a queued task among the queued tasks, oldest first. 0 when it is not queued. */
 export function queuePosition(board: Board, task: TaskId): number {
   const queue = board.open.filter((v) => v.state.kind === "queued").sort((a, b) => a.spec.createdAt - b.spec.createdAt);
   return queue.findIndex((v) => v.spec.id === task) + 1;
@@ -522,7 +451,6 @@ export function boardHeader(board: Board): string {
   return `chef  ${board.cooks.busy}/${board.cooks.cap} cooks${waiting ? `  ${waiting} needs you` : ""}`;
 }
 
-/** One line per open task, each fitted to `width`. An empty board yields []. */
 export function boardLines(board: Board, now: Millis, width: number): string[] {
   if (board.open.length === 0 && board.broken.length === 0) return [];
   const rows = [
@@ -545,7 +473,6 @@ function fit(line: string, width: number): string {
   return chars.length > width ? `${chars.slice(0, Math.max(0, width - 1)).join("")}…` : line;
 }
 
-/** Footer text for setStatus. Undefined when no task is open. */
 export function statusText(board: Board): string | undefined {
   if (board.open.length === 0) return undefined;
   const parts = [`${board.cooks.busy} cooking`];

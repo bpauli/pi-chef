@@ -20,7 +20,6 @@ const spec: TaskSpec = {
   createdAt: millis(1),
 };
 
-/** A detached process whose environment carries the cook marker, with a child that inherits it like a cook's bash. */
 function sleeper(sessionId: string): ChildProcess {
   const code = 'require("node:child_process").spawn("sleep", ["30"], { stdio: "ignore" }); setInterval(() => {}, 1000)';
   const child = spawn(process.execPath, ["-e", code], { detached: true, stdio: "ignore", env: { ...process.env, CHEF_SESSION_ID: sessionId } });
