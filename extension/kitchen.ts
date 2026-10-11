@@ -232,7 +232,7 @@ export class Kitchen extends KitchenReader {
   dispatch(input: DispatchInput): Promise<TaskView> {
     return this.mutate(async (viewAfterTick) => {
       const project = this.requireProject(input.project);
-      if (input.model !== undefined) parseModel(input.model);
+      const model = input.model === undefined ? undefined : parseModel(input.model);
       let id: TaskId | undefined;
       for (let attempt = 0; attempt < 5 && !id; attempt++) {
         const candidate = this.store.nextTaskId(project.name);
@@ -245,7 +245,7 @@ export class Kitchen extends KitchenReader {
           worktree: this.store.worktreeDir(candidate),
           baseBranch: project.baseBranch,
           sessionId: randomUUID() as SessionId,
-          model: input.model,
+          model,
           createdAt: this.now(),
         });
         if (created.kind === "created") id = candidate;

@@ -419,13 +419,15 @@ test("a dispatch whose worktree cannot be created fails at once with the git err
   assert.deepEqual(store.readEvents(view.spec.id).map((e) => e.type), ["launch_failed", "notified"]);
 });
 
-test("addProject refuses a base branch that does not exist or starts with a dash, and dispatch refuses a blank model", async () => {
+test("addProject refuses a base branch that does not exist or starts with a dash, and dispatch refuses a blank model and stores a trimmed one", async () => {
   const { kitchen, store, repos } = await setup();
   await assert.rejects(kitchen.addProject({ path: repos.api, name: "nope", baseBranch: "no-such-branch" }), (e: unknown) => e instanceof ChefError && /no-such-branch/.test(e.message));
   await assert.rejects(kitchen.addProject({ path: repos.api, name: "dash", baseBranch: "--output=/tmp/x" }), ChefError);
   assert.deepEqual(store.readProjects().map((p) => p.name), ["api", "web"]);
   await assert.rejects(kitchen.dispatch({ project: "api", title: "x", brief: "y", model: "  " }), (e: unknown) => e instanceof ChefError && /model/.test(e.message));
   assert.deepEqual(store.listTaskIds(), []);
+  const padded = await kitchen.dispatch({ project: "api", title: "m", brief: REPORT_STEP("done", "m"), model: ` ${FAKE_MODEL} ` });
+  assert.equal(store.readSpec(padded.spec.id).model, FAKE_MODEL);
   git(repos.api, "branch", "release");
   const p = await kitchen.addProject({ path: repos.api, name: "rel", baseBranch: "release" });
   assert.equal(p.baseBranch, "release");
