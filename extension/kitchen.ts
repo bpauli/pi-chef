@@ -196,10 +196,16 @@ export class KitchenReader {
 export class Kitchen extends KitchenReader {
   private chain: Promise<unknown> = Promise.resolve();
 
-  private mutate<T>(op: () => Promise<T>): Promise<T> {
+  private mutate<T>(op: (viewAfterTick: (task: TaskId) => Promise<TaskView>) => Promise<T>): Promise<T> {
+    const viewAfterTick = async (task: TaskId): Promise<TaskView> => {
+      const report = await this.runTick();
+      if (report.kind === "lost") throw lostError(report.holder);
+      const view = report.board.open.find((v) => v.spec.id === task);
+      return view ?? deriveTask(this.store.loadRecord(task, this.tails), new Map(), this.now());
+    };
     const next = this.chain.then(() => {
       if (!leaseIsMine(this.store, this.deps.self)) throw lostError(holderOf(this.store.readLease()));
-      return op();
+      return op(viewAfterTick);
     });
     this.chain = next.catch(() => undefined);
     return next;
@@ -221,7 +227,7 @@ export class Kitchen extends KitchenReader {
   }
 
   dispatch(input: DispatchInput): Promise<TaskView> {
-    return this.mutate(async () => {
+    return this.mutate(async (viewAfterTick) => {
       const project = this.requireProject(input.project);
       if (input.model !== undefined) parseModel(input.model);
       let id: TaskId | undefined;
@@ -242,7 +248,7 @@ export class Kitchen extends KitchenReader {
         if (created.kind === "created") id = candidate;
       }
       if (!id) throw new ChefError(`Could not allocate a task id for ${project.name}.`);
-      return this.viewAfterTick(id);
+      return viewAfterTick(id);
     });
   }
 
@@ -272,10 +278,10 @@ export class Kitchen extends KitchenReader {
   }
 
   stop(task: TaskId): Promise<{ view: TaskView; signalled: boolean }> {
-    return this.mutate(async () => {
+    return this.mutate(async (viewAfterTick) => {
       const rec = this.store.loadRecord(task, this.tails);
       const signalled = await this.stopNow(rec, await this.liveCooks([rec]));
-      return { view: await this.viewAfterTick(task), signalled };
+      return { view: await viewAfterTick(task), signalled };
     });
   }
 
@@ -291,7 +297,7 @@ export class Kitchen extends KitchenReader {
   }
 
   close(task: TaskId, discard: boolean): Promise<{ view: TaskView; removal: RemoveResult | { error: string } }> {
-    return this.mutate(async () => {
+    return this.mutate(async (viewAfterTick) => {
       const rec = this.store.loadRecord(task, this.tails);
       const live = await this.liveCooks([rec]);
       const before = deriveTask(rec, live, this.now());
@@ -310,7 +316,7 @@ export class Kitchen extends KitchenReader {
       } catch (e) {
         removal = { error: (e as Error).message };
       }
-      return { view: await this.viewAfterTick(task), removal };
+      return { view: await viewAfterTick(task), removal };
     });
   }
 
@@ -408,15 +414,6 @@ export class Kitchen extends KitchenReader {
     void this.mutate(async () => {
       if (this.store.runBytes(task, run) === 0) this.store.appendEvent(task, { type: "launch_failed", at: this.now(), run, reason });
     }).catch(() => undefined);
-  }
-
-  private async viewAfterTick(task: TaskId): Promise<TaskView> {
-    const report = await this.runTick();
-    if (report.kind === "lost") throw lostError(report.holder);
-    const view = report.board.open.find((v) => v.spec.id === task);
-    if (view) return view;
-    const rec = this.store.loadRecord(task, this.tails);
-    return deriveTask(rec, new Map(), this.now());
   }
 
   private requireProject(name: string): Project {
