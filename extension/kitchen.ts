@@ -249,7 +249,6 @@ export class Kitchen extends KitchenReader {
     return this.mutate(async () => {
       const rec = this.store.loadRecord(task, this.tails);
       if (rec.events.some((e) => e.type === "closed")) throw new ChefError(`${task} is closed. Dispatch a new task.`);
-      const before = deriveTask(rec, await this.liveCooks([rec]), this.now()).state;
       this.store.postMessage(task, text, this.now());
       const deadline = this.now() + (this.deps.exitWaitMs ?? 5000);
       for (;;) {
