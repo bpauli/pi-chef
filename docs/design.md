@@ -44,8 +44,8 @@ All tools are registered with `defaultActive: false` and `exposure: "model-only"
 
 | Tool | Parameters | Does |
 |---|---|---|
-| `chef_add_project` | `path`, `name?`, `note?`, `baseBranch?` | Registers a git repo. The name defaults to the directory name. The base branch defaults to the current branch of the repo. |
-| `chef_dispatch` | `project`, `title`, `brief`, `model?` | Creates a task and launches a cook, or queues it behind the cap. |
+| `chef_add_project` | `path`, `name?`, `note?`, `baseBranch?` | Registers a git repo. The name defaults to the directory name. The base branch defaults to the current branch of the repo. A given base branch must pass `git check-ref-format --branch` and exist locally. |
+| `chef_dispatch` | `project`, `title`, `brief`, `model?` | Creates a task and launches a cook, or queues it behind the cap. A `model` that starts with a dash is refused. |
 | `chef_board` | none | Projects, open tasks with state and activity, cook count. |
 | `chef_send` | `task`, `message` | One verb for steer, answer, and resume. Cooking: the cook takes it after its current tool call. Idle: the task relaunches on the same session with the message. A cook that reported and is still exiting blocks the relaunch, so `send` ticks until the exit (bounded by `exitWaitMs`, default 5 s) and reports the new run. It reports `queued` only when the cook cap holds the task. |
 | `chef_stop` | `task` | Stops a cooking cook (process group SIGTERM, SIGKILL after a grace period), or holds a queued task. The worktree stays. |
@@ -121,7 +121,7 @@ No pid is stored on disk. A cook is identified by `CHEF_SESSION_ID=<uuid>` in it
 
 A stop sends SIGTERM to the cook's process group, and Pi kills its own bash tree. SIGKILL after the grace period gives Pi no chance, so a command it was running can outlive it.
 
-All subprocess calls (`ps`, `git`) are async. Git facts are computed only for `chef_result`, `chef_close`, and dispatch, never on the tick.
+All subprocess calls (`ps`, `git`) are async. Git facts are computed only for `chef_result`, `chef_close`, and dispatch, never on the tick. Every git argv puts `--end-of-options` before the refs it takes from the kitchen, and the only model-controlled ref, the base branch, is validated at `chef_add_project`.
 
 ## Launch order
 

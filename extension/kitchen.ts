@@ -20,11 +20,12 @@ import {
   type TaskSpec,
   type TaskView,
   millis,
+  parseModel,
   parseProjectName,
 } from "./domain.ts";
 import { type Action, type GitFacts, type LiveCooks, type TaskRecord, closeVerdict, deriveTask, nextRunOf, plan } from "./derive.ts";
 import { type CookEnd, CookTable, type PiInvocation, firstPrompt, followUpPrompt, launchCook, messagesSection, pidStart, signalCook } from "./cooks.ts";
-import { type RemoveResult, diffstat, ensureWorktree, gitFacts, inspectRepo, removeWorktree } from "./git.ts";
+import { type RemoveResult, diffstat, ensureWorktree, gitFacts, inspectRepo, removeWorktree, verifyBaseBranch } from "./git.ts";
 import { RunTails, type Snapshot, type Store } from "./store.ts";
 
 export interface KitchenDeps {
@@ -212,6 +213,7 @@ export class Kitchen extends KitchenReader {
     return this.mutate(async () => {
       const { root, baseBranch } = await inspectRepo(input.path.replace(/^~(?=$|\/)/, process.env.HOME ?? "~"));
       const name = parseProjectName(input.name ?? basename(root));
+      if (input.baseBranch !== undefined) await verifyBaseBranch(root, input.baseBranch);
       return this.store.addProject({ name, path: root, baseBranch: input.baseBranch ?? baseBranch, note: input.note, addedAt: this.now() });
     });
   }
@@ -220,6 +222,7 @@ export class Kitchen extends KitchenReader {
   dispatch(input: DispatchInput): Promise<TaskView> {
     return this.mutate(async () => {
       const project = this.requireProject(input.project);
+      if (input.model !== undefined) parseModel(input.model);
       let id: TaskId | undefined;
       for (let attempt = 0; attempt < 5 && !id; attempt++) {
         const candidate = this.store.nextTaskId(project.name);

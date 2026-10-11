@@ -39,6 +39,14 @@ export async function inspectRepo(path: string): Promise<{ root: string; baseBra
   return { root, baseBranch: remoteHead ? remoteHead.replace(/^origin\//, "") : "main" };
 }
 
+/** A base branch from the model must be a valid branch name and exist locally before it reaches any argv. */
+export async function verifyBaseBranch(repo: string, baseBranch: string): Promise<void> {
+  if (!(await ok(repo, ["check-ref-format", "--branch", baseBranch]))) throw new ChefError(`"${baseBranch}" is not a valid branch name.`);
+  if (!(await ok(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", `refs/heads/${baseBranch}`]))) {
+    throw new ChefError(`Branch "${baseBranch}" does not exist in ${repo}. Pass a local branch as baseBranch.`);
+  }
+}
+
 // An existing path can be a leftover directory or a different checkout. Neither
 // is permission to run a cook there (pstack worktree.ts assertWorktree).
 async function assertWorktree(repo: string, worktree: string): Promise<void> {
@@ -56,8 +64,8 @@ async function assertWorktree(repo: string, worktree: string): Promise<void> {
 export async function ensureWorktree(repo: string, worktree: string, branch: string, baseBranch: string): Promise<void> {
   if (!existsSync(worktree)) {
     await git(repo, ["worktree", "prune"]);
-    const exists = (await git(repo, ["branch", "--list", branch])) !== "";
-    await git(repo, exists ? ["worktree", "add", worktree, branch] : ["worktree", "add", worktree, "-b", branch, baseBranch]);
+    const exists = (await git(repo, ["branch", "--list", "--end-of-options", branch])) !== "";
+    await git(repo, exists ? ["worktree", "add", "--end-of-options", worktree, branch] : ["worktree", "add", "-b", branch, "--end-of-options", worktree, baseBranch]);
   }
   await assertWorktree(repo, worktree);
 }
@@ -74,15 +82,15 @@ export async function gitFacts(repo: string, worktree: string, branch: string, b
   if (!existsSync(worktree)) return undefined;
   const status = await git(worktree, ["status", "--porcelain"]);
   const dirtyFiles = status ? status.split("\n").length : 0;
-  const ahead = Number(await git(repo, ["rev-list", "--count", `${baseBranch}..${branch}`]));
-  const unlanded = Number(await git(repo, ["rev-list", "--count", branch, "--not", baseBranch, "--remotes"]));
+  const ahead = Number(await git(repo, ["rev-list", "--count", "--end-of-options", `${baseBranch}..${branch}`]));
+  const unlanded = Number(await git(repo, ["rev-list", "--count", "--not", "--remotes", "--not", "--end-of-options", branch, `^${baseBranch}`]));
   const head = await git(worktree, ["symbolic-ref", "-q", "--short", "HEAD"]).catch(() => "");
   return { dirtyFiles, ahead, unlanded, onBranch: head === branch };
 }
 
 /** `git diff --stat base...branch`, capped. */
 export async function diffstat(repo: string, branch: string, baseBranch: string): Promise<string> {
-  const text = await git(repo, ["diff", "--stat", `${baseBranch}...${branch}`]).catch(() => "");
+  const text = await git(repo, ["diff", "--stat", "--end-of-options", `${baseBranch}...${branch}`]).catch(() => "");
   const lines = text.split("\n");
   return lines.length > DIFFSTAT_LINES ? [...lines.slice(0, DIFFSTAT_LINES), `... ${lines.length - DIFFSTAT_LINES} more lines`].join("\n") : text;
 }
@@ -103,8 +111,8 @@ export async function removeWorktree(repo: string, worktree: string, branch: str
   const hadWorktree = existsSync(worktree);
   if (hadWorktree) await git(repo, ["worktree", "remove", ...(discard ? ["--force"] : []), worktree]);
   await git(repo, ["worktree", "prune"]);
-  if ((await git(repo, ["branch", "--list", branch])) === "") return { worktree: hadWorktree ? "removed" : "missing", branch: "missing" };
-  const landed = discard || (await ok(repo, ["merge-base", "--is-ancestor", branch, baseBranch]));
-  const deleted = landed && (await ok(repo, ["branch", "-D", branch]));
+  if ((await git(repo, ["branch", "--list", "--end-of-options", branch])) === "") return { worktree: hadWorktree ? "removed" : "missing", branch: "missing" };
+  const landed = discard || (await ok(repo, ["merge-base", "--is-ancestor", "--end-of-options", branch, baseBranch]));
+  const deleted = landed && (await ok(repo, ["branch", "-D", "--end-of-options", branch]));
   return { worktree: hadWorktree ? "removed" : "missing", branch: deleted ? "deleted" : "kept" };
 }

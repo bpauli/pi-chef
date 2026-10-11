@@ -38,6 +38,13 @@ export function parseProjectName(raw: string): ProjectName {
   return name as ProjectName;
 }
 
+/** A model goes after `--model` in the cook's argv, so it must not look like a flag. */
+export function parseModel(raw: string): string {
+  const model = raw.trim();
+  if (!model || model.startsWith("-")) throw new ChefError(`"${raw}" is not a model. Pass provider/model, for example anthropic/claude-sonnet-5-5.`);
+  return model;
+}
+
 export const TASK_ID = /^([a-z0-9][a-z0-9-]*)-(\d+)$/;
 
 /** Accepts `api-7`, ` API-7 `, and a bare `7` when exactly one known task has that sequence. */
@@ -118,8 +125,8 @@ export type TaskEvent = Static<typeof TaskEventSchema>;
 export const ConfigSchema = Type.Object(
   {
     maxCooks: Type.Optional(Type.Integer({ minimum: 1 })),
-    model: Type.Optional(Type.String({ description: "cook model, provider/id" })),
-    thinking: Type.Optional(Type.String()),
+    model: Type.Optional(Type.String({ description: "cook model, provider/id", pattern: "^[^-]" })),
+    thinking: Type.Optional(Type.String({ pattern: "^[^-]" })),
     cookArgs: Type.Optional(Type.Array(Type.String(), { description: "extra pi args for every cook" })),
   },
   { additionalProperties: false },
