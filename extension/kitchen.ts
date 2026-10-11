@@ -118,7 +118,7 @@ export class KitchenReader {
     const snap = this.snapshot();
     const live = await this.liveCooks(snap.records);
     const { views } = plan(this.planInput(snap.records, live, snap.config.maxCooks));
-    return this.boardOf(views, snap, "read-only", this.holder());
+    return this.boardOf(views, snap, leaseIsMine(this.store, this.deps.self) ? "owner" : "read-only", this.holder());
   }
 
   async result(task: TaskId): Promise<TaskResult> {

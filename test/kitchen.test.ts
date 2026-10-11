@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { after, afterEach, before, test } from "node:test";
 import { ChefError, type Notice, type Pid, type SessionId, type TaskId, millis, parseProjectName, runNo } from "../extension/domain.ts";
 import { alive, runsSession, scanCooks, signalCook } from "../extension/cooks.ts";
+import { boardHeader } from "../extension/derive.ts";
 import { Kitchen, type KitchenDeps, KitchenReader, type Opened } from "../extension/kitchen.ts";
 import { RunTails, Store } from "../extension/store.ts";
 import { CHEF_ENTRY, COMMIT_STEP, FAKE_MODEL, FAKE_PROVIDER, NEVER_EXIT, PI_CLI, REPORT_STEP, SLOW_EXIT, type TempKitchen, git, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
@@ -534,6 +535,13 @@ test("a second session opens read-only and cannot dispatch; takeover moves the l
   assert.equal(lost.kind, "lost");
   assert.equal(lost.kind === "lost" && lost.holder?.sessionId, "chef-other");
   await assert.rejects(kitchen.dispatch({ project: "api", title: "x", brief: "y" }), /takeover/);
+});
+
+test("the owner's board says owner and its header does not claim read-only", async () => {
+  const { kitchen } = await setup();
+  const board = await kitchen.board();
+  assert.equal(board.role, "owner");
+  assert.doesNotMatch(boardHeader(board), /read-only/);
 });
 
 test("a read-only session promotes itself once the lease is free, and not while another owner holds it", async () => {
