@@ -488,7 +488,9 @@ test("a launch rescans for a cook the owner does not know, so a liveness miss ne
   const sid = `0199c0de-3333-7000-8000-${String(process.pid).padStart(12, "0")}` as SessionId;
   store.createTask({ id, project: parseProjectName("api"), title: "Ghost", brief: "unused", branch: `chef/${id}`, worktree: store.worktreeDir(id), baseBranch: "main", sessionId: sid, model: undefined, createdAt: millis(Date.now()) });
   store.writePrompt(id, runNo(1), "STEP say: hi\n");
-  const fds = store.claimRun(id, runNo(1))!;
+  const claim = store.claimRun(id, runNo(1));
+  assert.ok(claim.kind === "claimed");
+  const { fds } = claim;
   writeFileSync(store.runFile(id, runNo(1)), `${JSON.stringify({ type: "turn_start" })}\n`);
   for (const fd of [fds.stdout, fds.stderr]) closeSync(fd);
   const first = await waitNotice(kitchen, id);

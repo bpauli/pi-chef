@@ -4,6 +4,7 @@ import { basename } from "node:path";
 import { promisify } from "node:util";
 import type { Config, Pid, Project, RunNo, TaskSpec } from "./domain.ts";
 import type { LiveCooks } from "./derive.ts";
+import type { RunFds } from "./store.ts";
 
 const run = promisify(execFile);
 
@@ -31,7 +32,7 @@ export interface LaunchSpec {
   sessionDir: string;
   taskDir: string;
   config: Config;
-  fds: { stdout: number; stderr: number };
+  fds: RunFds;
 }
 
 export function cookArgv(l: LaunchSpec): string[] {

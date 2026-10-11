@@ -84,11 +84,11 @@ export class KitchenReader {
 
   static async open(deps: KitchenDeps, options: { takeover?: boolean } = {}): Promise<Opened> {
     deps.store.ensureLayout();
-    const holder = await acquireLease(deps.store, deps.self, options.takeover === true);
-    if (holder) {
+    const lease = await acquireLease(deps.store, deps.self, options.takeover === true);
+    if (lease.kind === "held") {
       const reader = new KitchenReader(deps);
       await reader.cooks.adopt();
-      return { kind: "read-only", reader, holder };
+      return { kind: "read-only", reader, holder: lease.holder };
     }
     const kitchen = new Kitchen(deps);
     await kitchen.cooks.adopt();
@@ -104,7 +104,7 @@ export class KitchenReader {
   }
 
   async promote(): Promise<Kitchen | undefined> {
-    if (await acquireLease(this.store, this.deps.self, false)) return undefined;
+    if ((await acquireLease(this.store, this.deps.self, false)).kind === "held") return undefined;
     const kitchen = new Kitchen(this.deps);
     await kitchen.cooks.adopt();
     return kitchen;
@@ -238,7 +238,7 @@ export class Kitchen extends KitchenReader {
           model: input.model,
           createdAt: this.now(),
         });
-        if (created) id = candidate;
+        if (created.kind === "created") id = candidate;
       }
       if (!id) throw new ChefError(`Could not allocate a task id for ${project.name}.`);
       return this.viewAfterTick(id);
@@ -384,8 +384,8 @@ export class Kitchen extends KitchenReader {
     }
     this.store.moveToHandled(spec.id, pending.map((m) => m.file));
     if (action.reclaim) this.store.releaseEmptyClaim(spec.id, action.run);
-    const fds = this.store.claimRun(spec.id, action.run);
-    if (!fds) return;
+    const claim = this.store.claimRun(spec.id, action.run);
+    if (claim.kind === "taken") return;
     const pid = launchCook(
       {
         pi: this.deps.pi,
@@ -396,7 +396,7 @@ export class Kitchen extends KitchenReader {
         sessionDir: this.store.sessionDir(spec.id),
         taskDir: this.store.taskDir(spec.id),
         config: this.store.readConfig(),
-        fds,
+        fds: claim.fds,
       },
       (end) => this.cookEnded(spec.id, action.run, end),
     );
@@ -437,14 +437,14 @@ function holderOf(lease: ReturnType<Store["readLease"]>): Holder | undefined {
   return lease ? { pid: lease.pid as Pid, sessionId: lease.sessionId } : undefined;
 }
 
-export async function acquireLease(store: Store, self: KitchenDeps["self"], takeover: boolean): Promise<Holder | undefined> {
+export async function acquireLease(store: Store, self: KitchenDeps["self"], takeover: boolean): Promise<{ kind: "acquired" } | { kind: "held"; holder: Holder }> {
   const lease = store.readLease();
   if (lease && !(lease.pid === self.pid && lease.sessionId === self.sessionId)) {
     const start = await pidStart(lease.pid);
-    if (start !== undefined && start === lease.pidStart && !takeover) return holderOf(lease);
+    if (start !== undefined && start === lease.pidStart && !takeover) return { kind: "held", holder: { pid: lease.pid as Pid, sessionId: lease.sessionId } };
   }
   store.writeLease({ pid: self.pid, pidStart: (await pidStart(self.pid)) ?? "", sessionId: self.sessionId, since: Date.now() });
-  return undefined;
+  return { kind: "acquired" };
 }
 
 export function leaseIsMine(store: Store, self: KitchenDeps["self"]): boolean {

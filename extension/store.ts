@@ -53,6 +53,11 @@ export interface Snapshot {
   problems: string[];
 }
 
+export interface RunFds {
+  stdout: number;
+  stderr: number;
+}
+
 export interface InboxMessage {
   file: string;
   at: Millis;
@@ -218,18 +223,18 @@ export class Store {
     return `${project}-${Math.max(0, ...seqs) + 1}` as TaskId;
   }
 
-  createTask(spec: TaskSpec): boolean {
+  createTask(spec: TaskSpec): { kind: "created" } | { kind: "exists" } {
     this.ensureLayout();
     const dir = this.taskDir(spec.id);
     try {
       mkdirSync(dir);
     } catch (e) {
-      if (isCode(e, "EEXIST")) return false;
+      if (isCode(e, "EEXIST")) return { kind: "exists" };
       throw e;
     }
     for (const sub of ["runs", join("inbox", "handled"), "session"]) mkdirSync(join(dir, sub), { recursive: true });
     writeAtomic(join(dir, "task.json"), `${JSON.stringify(spec, null, 2)}\n`);
-    return true;
+    return { kind: "created" };
   }
 
   readSpec(id: TaskId): TaskSpec {
@@ -311,16 +316,16 @@ export class Store {
     return existsSync(path) ? readFileSync(path, "utf8") : undefined;
   }
 
-  claimRun(id: TaskId, n: RunNo): { stdout: number; stderr: number } | undefined {
+  claimRun(id: TaskId, n: RunNo): { kind: "claimed"; fds: RunFds } | { kind: "taken" } {
     let stdout: number;
     try {
       stdout = openSync(this.runFile(id, n), "wx");
     } catch (e) {
-      if (isCode(e, "EEXIST")) return undefined;
+      if (isCode(e, "EEXIST")) return { kind: "taken" };
       throw e;
     }
     try {
-      return { stdout, stderr: openSync(this.runErr(id, n), "a") };
+      return { kind: "claimed", fds: { stdout, stderr: openSync(this.runErr(id, n), "a") } };
     } catch (e) {
       closeSync(stdout);
       throw e;

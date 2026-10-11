@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ChefError, type TaskId, type TaskSpec, millis, parseProjectName, runNo } from "../extension/domain.ts";
 import { EMPTY_RUN, deriveTask } from "../extension/derive.ts";
-import { RunTail, RunTails, Store } from "../extension/store.ts";
+import { type RunFds, RunTail, RunTails, Store } from "../extension/store.ts";
 
 function withDir(run: (dir: string) => void): void {
   const dir = mkdtempSync(join(tmpdir(), "chef-store-"));
@@ -30,6 +30,12 @@ const spec = (store: Store, over: Partial<TaskSpec> = {}): TaskSpec => ({
   createdAt: millis(1),
   ...over,
 });
+
+function claimFds(store: Store): RunFds {
+  const claim = store.claimRun(id, runNo(1));
+  assert.ok(claim.kind === "claimed");
+  return claim.fds;
+}
 
 const line = (type: string, extra: Record<string, unknown> = {}) => `${JSON.stringify({ type, ...extra })}\n`;
 
@@ -79,15 +85,14 @@ test("RunTail starts over when the file shrinks (an empty claim was reclaimed)",
   });
 });
 
-test("claimRun returns undefined when runs/<n>.jsonl already exists, and releaseEmptyClaim frees only an empty one", () => {
+test("claimRun reports taken when runs/<n>.jsonl already exists, and releaseEmptyClaim frees only an empty one", () => {
   withDir((dir) => {
     const store = new Store(dir);
     store.createTask(spec(store));
-    const first = store.claimRun(id, runNo(1));
-    assert.ok(first);
-    assert.equal(store.claimRun(id, runNo(1)), undefined);
+    assert.equal(store.claimRun(id, runNo(1)).kind, "claimed");
+    assert.deepEqual(store.claimRun(id, runNo(1)), { kind: "taken" });
     assert.equal(store.releaseEmptyClaim(id, runNo(1)), true);
-    assert.ok(store.claimRun(id, runNo(1)));
+    assert.equal(store.claimRun(id, runNo(1)).kind, "claimed");
     appendFileSync(store.runFile(id, runNo(1)), "x");
     assert.equal(store.releaseEmptyClaim(id, runNo(1)), false);
     assert.equal(store.releaseEmptyClaim(id, runNo(9)), true);
@@ -104,7 +109,7 @@ test("nextTaskId derives max sequence + 1 from the task directories and survives
     store.createTask(spec(store, { id: "web-3" as TaskId }));
     assert.equal(store.nextTaskId(api), "api-8");
     assert.equal(store.nextTaskId(parseProjectName("web")), "web-4");
-    assert.equal(store.createTask(spec(store, { id: "api-7" as TaskId })), false);
+    assert.deepEqual(store.createTask(spec(store, { id: "api-7" as TaskId })), { kind: "exists" });
   });
 });
 
@@ -164,7 +169,7 @@ test("loadRecord folds the run files, counts pending messages, and skips a torn 
     store.appendEvent(id, { type: "notified", at: 5, run: 1 });
     appendFileSync(join(store.taskDir(id), "log.jsonl"), '{"type":"sto');
     store.writePrompt(id, runNo(1), "p1");
-    const fds = store.claimRun(id, runNo(1))!;
+    const fds = claimFds(store);
     appendFileSync(store.runFile(id, runNo(1)), line("session", { timestamp: "2026-01-01T00:00:00.000Z" }) + line("agent_settled"));
     writeFileSync(store.runErr(id, runNo(1)), "warn\n");
     store.writePrompt(id, runNo(2), "p2");
@@ -190,7 +195,7 @@ test("an old kitchen's stop for a run that was never claimed loads as a hold, an
     const store = new Store(dir);
     store.createTask(spec(store));
     store.writePrompt(id, runNo(1), "p1");
-    const fds = store.claimRun(id, runNo(1))!;
+    const fds = claimFds(store);
     closeSync(fds.stdout);
     closeSync(fds.stderr);
     appendFileSync(store.runFile(id, runNo(1)), line("message_end", { message: { role: "user", timestamp: 1 } }));
@@ -224,10 +229,10 @@ test("a relaunch of the same run appends to the err file instead of erasing the 
     const store = new Store(dir);
     store.createTask(spec(store));
     store.writePrompt(id, runNo(1), "p1");
-    const first = store.claimRun(id, runNo(1))!;
+    const first = claimFds(store);
     writeFileSync(store.runErr(id, runNo(1)), "attempt 1 died\n");
     assert.equal(store.releaseEmptyClaim(id, runNo(1)), true);
-    const second = store.claimRun(id, runNo(1))!;
+    const second = claimFds(store);
     assert.equal(readFileSync(store.runErr(id, runNo(1)), "utf8"), "attempt 1 died\n");
     assert.equal(store.runBytes(id, runNo(1)), 0);
     for (const fd of [first.stdout, first.stderr, second.stdout, second.stderr]) closeSync(fd);
