@@ -28,6 +28,8 @@ export interface RunFacts {
   startedAt: Millis | undefined;
   lastAt: Millis | undefined;
   settled: boolean;
+  /** The run's prompt reached the session as a user message, so the session holds the brief. */
+  prompted: boolean;
   turns: number;
   activity: Activity;
   report: CookReport | undefined;
@@ -39,6 +41,7 @@ export const EMPTY_RUN: RunFacts = {
   startedAt: undefined,
   lastAt: undefined,
   settled: false,
+  prompted: false,
   turns: 0,
   activity: { kind: "starting" },
   report: undefined,
@@ -66,6 +69,7 @@ const AssistantEndLine = Type.Object({
     timestamp: Type.Optional(Type.Number()),
   }),
 });
+const UserEndLine = Type.Object({ type: Type.Literal("message_end"), message: Type.Object({ role: Type.Literal("user") }) });
 const SettledLine = Type.Object({ type: Type.Literal("agent_settled") });
 
 export function foldRunLine(facts: RunFacts, line: string): RunFacts {
@@ -100,6 +104,7 @@ export function foldRunLine(facts: RunFacts, line: string): RunFacts {
       providerError: failed ? (message.errorMessage ?? "provider error") : undefined,
     };
   }
+  if (Value.Check(UserEndLine, parsed)) return { ...facts, prompted: true };
   if (Value.Check(SettledLine, parsed)) return { ...facts, settled: true };
   return facts;
 }
@@ -125,10 +130,12 @@ export interface RunRecord {
   n: RunNo;
   /** runs/<n>.jsonl exists. A prompt without it is an interrupted launch. */
   claimed: boolean;
-  /** Size of runs/<n>.jsonl. Zero with no live process is also an interrupted launch. */
+  /** Size of runs/<n>.jsonl. Zero with no live process and an empty err file is an interrupted launch. */
   bytes: number;
+  /** Modification time of runs/<n>.jsonl, undefined when unclaimed. For an empty claim this is the claim time. */
+  claimedAt: Millis | undefined;
   facts: RunFacts;
-  /** Tail of runs/<n>.err, read only for a run that ended without settling. */
+  /** Tail of runs/<n>.err, read for every claimed run that has not settled. */
   stderrTail: string;
 }
 
@@ -145,27 +152,71 @@ export interface TaskRecord {
 /** Live cook processes, keyed by the `--session-id` in their argv. */
 export type LiveCooks = ReadonlyMap<string, Pid>;
 
+/** The last launch attempt produced no output. Its run number is used up. */
+export interface LaunchFailure {
+  run: RunNo;
+  at: Millis;
+  reason: string;
+}
+
 interface Folded {
   last: RunRecord | undefined;
   nextRun: RunNo;
   lastStop: Extract<TaskEvent, { type: "stop" }> | undefined;
   closed: Extract<TaskEvent, { type: "closed" }> | undefined;
-  /** A message newer than the last stop resumes a held task. */
+  launchFailure: LaunchFailure | undefined;
+  /** A message newer than the last stop or launch failure resumes a held task. */
   resumable: boolean;
   /** The last stop names the run that would launch next, and nothing newer resumes it. */
   held: boolean;
+  /** Some run delivered its prompt, so the session holds the brief and a relaunch sends only messages. */
+  briefDelivered: boolean;
+}
+
+const errTail = (text: string): string => text.trim().split("\n").filter(Boolean).slice(-3).join(" ");
+
+/**
+ * From the owner's `launch_failed` event for a run that never started, or from
+ * the files alone: an empty claim with a dead process and a non-empty err file.
+ * The event wins when both name the same run; the files alone cover a failure
+ * that happened while no owner ran.
+ */
+function launchFailureOf(rec: TaskRecord, last: RunRecord | undefined): LaunchFailure | undefined {
+  const event = rec.events.filter((e) => e.type === "launch_failed").at(-1);
+  const emptyClaim = last !== undefined && last.claimed && last.bytes === 0 ? last : undefined;
+  const tail = emptyClaim ? errTail(emptyClaim.stderrTail) : "";
+  if (event && !rec.runs.some((r) => r.n === event.run && r.bytes > 0) && (last === undefined || event.run >= last.n)) {
+    const detail = tail && emptyClaim?.n === event.run ? `${event.reason}: ${tail}` : event.reason;
+    return { run: runNo(event.run), at: millis(event.at), reason: detail };
+  }
+  if (emptyClaim && tail) {
+    return { run: emptyClaim.n, at: emptyClaim.claimedAt ?? millis(0), reason: `cook exited before its first output line: ${tail}` };
+  }
+  return undefined;
 }
 
 function fold(rec: TaskRecord): Folded {
   const last = rec.runs.at(-1);
   const lastStop = rec.events.filter((e) => e.type === "stop").at(-1);
   const closed = rec.events.find((e) => e.type === "closed");
-  const stopAt = lastStop?.at ?? Number.NEGATIVE_INFINITY;
-  // An empty claim is relaunched as the same run, so it does not advance the number.
+  const launchFailure = launchFailureOf(rec, last);
+  // An interrupted launch (an empty claim with an empty err file) is relaunched as
+  // the same run. A failed launch used its number up, so the retry is the next run.
   const started = last !== undefined && last.claimed && last.bytes > 0;
-  const nextRun = last === undefined ? runNo(1) : started ? runNo(last.n + 1) : last.n;
-  const resumable = rec.pendingAt.some((at) => at > stopAt);
-  return { last, nextRun, lastStop, closed, resumable, held: lastStop !== undefined && lastStop.run === nextRun && !resumable };
+  const fromRuns = last === undefined ? 1 : started ? last.n + 1 : last.n;
+  const nextRun = runNo(Math.max(fromRuns, launchFailure ? launchFailure.run + 1 : 1));
+  const holdAt = Math.max(lastStop?.at ?? Number.NEGATIVE_INFINITY, launchFailure?.at ?? Number.NEGATIVE_INFINITY);
+  const resumable = rec.pendingAt.some((at) => at > holdAt);
+  return {
+    last,
+    nextRun,
+    lastStop,
+    closed,
+    launchFailure,
+    resumable,
+    held: lastStop !== undefined && lastStop.run === nextRun && !resumable,
+    briefDelivered: rec.runs.some((r) => r.facts.prompted),
+  };
 }
 
 export function nextRunOf(rec: TaskRecord): RunNo {
@@ -176,6 +227,7 @@ export function nextRunOf(rec: TaskRecord): RunNo {
  * The state machine. First match wins:
  *   closed event                                   -> closed
  *   live process and the last run is not settled   -> cooking
+ *   the last launch failed                         -> idle(failed), or queued(message) when a newer message resumes it
  *   last run has no run file, or an empty one      -> queued(interrupted-launch), or idle(stopped) when held
  *   a message newer than the last stop             -> queued(message)
  *   no runs                                        -> queued(new), or idle(stopped) when held
@@ -185,11 +237,15 @@ export function nextRunOf(rec: TaskRecord): RunNo {
  */
 export function deriveTask(rec: TaskRecord, live: LiveCooks, now: Millis): TaskView {
   const view = (state: TaskState): TaskView => ({ spec: rec.spec, state, runs: rec.runs.length, pendingMessages: rec.pendingAt.length });
-  const { last, lastStop, closed, resumable, held } = fold(rec);
+  const { last, lastStop, closed, launchFailure, resumable, held } = fold(rec);
   if (closed) return view({ kind: "closed", at: millis(closed.at), discarded: closed.discarded });
   const pid = live.get(rec.spec.sessionId);
   if (pid !== undefined && last?.claimed && !last.facts.settled) {
     return view({ kind: "cooking", run: last.n, since: last.facts.startedAt ?? now, activity: last.facts.activity });
+  }
+  if (launchFailure) {
+    if (resumable) return view({ kind: "queued", why: "message" });
+    return view({ kind: "idle", run: launchFailure.run, since: launchFailure.at, outcome: { kind: "failed", reason: launchFailure.reason } });
   }
   const stopped = (run: RunNo | undefined): TaskView => view({ kind: "idle", run, since: millis(lastStop?.at ?? now), outcome: { kind: "stopped" } });
   if (last && (!last.claimed || last.bytes === 0)) return held ? stopped(rec.runs.at(-2)?.n) : view({ kind: "queued", why: "interrupted-launch" });
@@ -205,7 +261,7 @@ export function outcomeOf(run: RunRecord, stopped: boolean): Outcome {
   const { facts } = run;
   if (!facts.settled) {
     if (stopped) return { kind: "stopped" };
-    const tail = run.stderrTail.trim().split("\n").filter(Boolean).slice(-3).join(" ");
+    const tail = errTail(run.stderrTail);
     return { kind: "failed", reason: tail ? `cook exited before settling: ${tail}` : "cook exited before settling" };
   }
   if (facts.report) {
@@ -236,7 +292,8 @@ export function noticeFor(rec: TaskRecord, view: TaskView): Notice | undefined {
 // ---------- Convergence: one plan per tick ----------
 
 export type Action =
-  | { kind: "launch"; task: TaskId; run: RunNo; reusePrompt: boolean; reclaim: boolean }
+  /** `prompt` is `brief` until a run has delivered it, `existing` for an interrupted launch, else `messages`. */
+  | { kind: "launch"; task: TaskId; run: RunNo; prompt: "brief" | "messages" | "existing"; reclaim: boolean }
   | { kind: "signal"; task: TaskId; pid: Pid; signal: "SIGTERM" | "SIGKILL" }
   | { kind: "remove-worktree"; task: TaskId; discard: boolean }
   | { kind: "notify"; notice: Notice };
@@ -289,9 +346,10 @@ export function plan(input: PlanInput): { views: TaskView[]; actions: Action[] }
   for (const { rec } of queued) {
     if (busy >= input.cap) break;
     if (live.has(rec.spec.sessionId)) continue;
-    const { last, nextRun } = fold(rec);
+    const { last, nextRun, briefDelivered } = fold(rec);
     const reuse = last !== undefined && last.n === nextRun;
-    actions.push({ kind: "launch", task: rec.spec.id, run: nextRun, reusePrompt: reuse, reclaim: reuse && last.claimed });
+    const prompt = reuse ? "existing" : briefDelivered ? "messages" : "brief";
+    actions.push({ kind: "launch", task: rec.spec.id, run: nextRun, prompt, reclaim: reuse && last.claimed });
     busy += 1;
   }
   return { views, actions };

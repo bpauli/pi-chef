@@ -50,23 +50,29 @@ export function cookArgv(l: LaunchSpec): string[] {
   return args;
 }
 
+/** How a cook process ended, as seen by the owner that spawned it. */
+export type CookEnd = { kind: "exit"; code: number | null; signal: NodeJS.Signals | null } | { kind: "error"; message: string };
+
 /**
- * Starts one cook run and forgets it: detached in its own process group, stdin
- * ignored (an open stdin blocks `-p`), stdout to the claimed run file, stderr
- * to the err file. Returns the pid for the liveness map.
+ * Starts one cook run: detached in its own process group, stdin ignored (an open
+ * stdin blocks `-p`), stdout to the claimed run file, stderr to the err file.
+ * Returns the pid for the liveness map, or undefined when spawn itself failed;
+ * `onEnd` then reports the error, or later the exit. The claim fds are closed
+ * either way.
  */
-export function launchCook(l: LaunchSpec): Pid {
+export function launchCook(l: LaunchSpec, onEnd: (end: CookEnd) => void): Pid | undefined {
   const child = spawn(l.pi.command, cookArgv(l), {
     cwd: l.spec.worktree,
     detached: true,
     stdio: ["ignore", l.fds.stdout, l.fds.stderr],
     env: { ...process.env, [ROLE_ENV]: "cook", [TASK_DIR_ENV]: l.taskDir, [SESSION_ENV]: l.spec.sessionId },
   });
+  child.on("error", (e) => onEnd({ kind: "error", message: `spawn of ${basename(l.pi.command)} failed: ${e.message}` }));
+  child.on("exit", (code, signal) => onEnd({ kind: "exit", code, signal }));
   child.unref();
   closeSync(l.fds.stdout);
   closeSync(l.fds.stderr);
-  if (child.pid === undefined) throw new Error(`spawn of ${basename(l.pi.command)} returned no pid`);
-  return child.pid as Pid;
+  return child.pid === undefined ? undefined : (child.pid as Pid);
 }
 
 // ---------- Process facts ----------

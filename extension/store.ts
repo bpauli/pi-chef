@@ -241,15 +241,18 @@ export class Store {
     const runs = ns.map((n): RunRecord => {
       const path = this.runFile(id, runNo(n));
       let bytes = -1;
+      let claimedAt: Millis | undefined;
       try {
-        bytes = statSync(path).size;
+        const st = statSync(path);
+        bytes = st.size;
+        claimedAt = millis(Math.round(st.mtimeMs));
       } catch (e) {
         if (!isCode(e, "ENOENT")) throw e;
       }
       const claimed = bytes >= 0;
       const facts = claimed ? tails.get(path).poll() : EMPTY_RUN;
-      const stderrTail = claimed && bytes > 0 && !facts.settled ? this.tail(this.runErr(id, runNo(n))) : "";
-      return { n: runNo(n), claimed, bytes: Math.max(0, bytes), facts, stderrTail };
+      const stderrTail = claimed && !facts.settled ? this.tail(this.runErr(id, runNo(n))) : "";
+      return { n: runNo(n), claimed, bytes: Math.max(0, bytes), claimedAt, facts, stderrTail };
     });
     return {
       spec,
@@ -288,7 +291,11 @@ export class Store {
     return existsSync(path) ? readFileSync(path, "utf8") : undefined;
   }
 
-  /** Claims run n by creating runs/<n>.jsonl with O_EXCL. EEXIST means another launch won. */
+  /**
+   * Claims run n by creating runs/<n>.jsonl with O_EXCL. EEXIST means another
+   * launch won. The err file is appended, so a relaunch of the same run never
+   * erases the diagnostic of the attempt before it.
+   */
   claimRun(id: TaskId, n: RunNo): { stdout: number; stderr: number } | undefined {
     let stdout: number;
     try {
@@ -297,7 +304,21 @@ export class Store {
       if (isCode(e, "EEXIST")) return undefined;
       throw e;
     }
-    return { stdout, stderr: openSync(this.runErr(id, n), "w") };
+    try {
+      return { stdout, stderr: openSync(this.runErr(id, n), "a") };
+    } catch (e) {
+      closeSync(stdout);
+      throw e;
+    }
+  }
+
+  /** Size of runs/<n>.jsonl, undefined when it does not exist. */
+  runBytes(id: TaskId, n: RunNo): number | undefined {
+    try {
+      return statSync(this.runFile(id, n)).size;
+    } catch {
+      return undefined;
+    }
   }
 
   /** Removes an empty claim left by an interrupted launch. A claim with content stays. */

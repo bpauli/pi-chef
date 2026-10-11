@@ -107,6 +107,8 @@ export const TaskEventSchema = Type.Union([
   Type.Object({ type: Type.Literal("stop"), at: Type.Number(), run: Type.Number() }, { additionalProperties: false }),
   // The chef session was told the outcome of run `run`. At least once.
   Type.Object({ type: Type.Literal("notified"), at: Type.Number(), run: Type.Number() }, { additionalProperties: false }),
+  // Run `run` never produced output: the launch threw, spawn failed, or the cook exited before its first line.
+  Type.Object({ type: Type.Literal("launch_failed"), at: Type.Number(), run: Type.Number(), reason: Type.String() }, { additionalProperties: false }),
   // Written before the worktree is removed. The tick finishes the removal.
   Type.Object({ type: Type.Literal("closed"), at: Type.Number(), discarded: Type.Boolean() }, { additionalProperties: false }),
 ]);

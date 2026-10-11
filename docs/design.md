@@ -66,10 +66,10 @@ One writer per file. No file is shared by two writers.
 | `pass.lock` | the lease holder | `{pid, pidStart, sessionId, since}`. |
 | `projects/<name>.json` | owner, once | Project spec. |
 | `tasks/<id>/task.json` | owner, once (O_EXCL) | Immutable task spec: project, title, brief, branch, worktree, base branch, session id, model. |
-| `tasks/<id>/log.jsonl` | owner, append | Decisions only: `stop`, `notified`, `closed`. |
+| `tasks/<id>/log.jsonl` | owner, append | Decisions only: `stop`, `notified`, `launch_failed`, `closed`. |
 | `tasks/<id>/runs/<n>.prompt.md` | owner | Launch intent for run `n`: brief or messages. |
 | `tasks/<id>/runs/<n>.jsonl` | the cook's Pi stdout | Everything the cook did. The owner only creates it empty with O_EXCL. That create is the launch claim. |
-| `tasks/<id>/runs/<n>.err` | the cook's Pi stderr | Diagnostics. |
+| `tasks/<id>/runs/<n>.err` | the cook's Pi stderr | Diagnostics. Opened for append, so a relaunch of the same run keeps the earlier attempt's output. |
 | `tasks/<id>/session/` | the cook's Pi | The task's Pi session, shared by all runs. |
 | `tasks/<id>/inbox/*.msg` | owner creates with tmp plus rename | Messages to the task. |
 | `tasks/<id>/inbox/handled/` | one mover | The cooking cook moves a message here before it steers. While no cook is live, the owner moves messages here when it writes them into a prompt. |
@@ -96,7 +96,17 @@ type Outcome =
   | { kind: "stopped" };
 ```
 
-A run that settled without `chef_report` derives `done` with `reported: false` and the final assistant text as the summary. A provider error, a crash, or an exit before `agent_settled` derives `failed`. A prompt file with no run file, or a zero-byte run file with no live process, derives `queued(interrupted-launch)`, not `failed`.
+A run that settled without `chef_report` derives `done` with `reported: false` and the final assistant text as the summary. A provider error, a crash, or an exit before `agent_settled` derives `failed`. A prompt file with no run file, or a zero-byte run file with no live process and an empty err file, derives `queued(interrupted-launch)`, not `failed`: the chef crashed between the claim and the spawn, and the tick relaunches the same run from its prompt.
+
+### Launch failures
+
+A launch that produces no output is a failure, not a retry. Three facts derive it, in this order:
+
+- A `launch_failed {run, reason}` event for the run that would launch next, written by the owner when the launch threw (worktree creation, the claim), when `spawn` reported an error, or when the cook process exited before its run file had a first line. The owner that spawned the cook sees its exit; `cookEnded` checks that the run file is still zero bytes before it writes the event.
+- Without an event: a zero-byte run file with no live process and a non-empty err file. This covers a cook that died while no owner ran. The reason is the err tail.
+- A `launch_failed` event for a run that has output after all is ignored. The run's own outcome wins.
+
+The task derives `idle(failed)` for that run, with the event reason plus the err tail, and the chef gets a wake. The run number is used up: the retry is the next run. A message newer than the failure resumes the task as `queued(message)`. The relaunch prompt is the brief plus the messages when no run has delivered the brief yet (`prompted`: the run file holds a user `message_end`), else only the messages. `chef_dispatch` answers `failed to launch: <reason>` when the first tick fails the launch.
 
 A `stop` event holds a task. A pending message older than the last stop does not relaunch it; the next newer message does, and the relaunch prompt carries every pending message. A held task is `idle(stopped)`.
 
@@ -118,9 +128,9 @@ All subprocess calls (`ps`, `git`) are async. Git facts are computed only for `c
 Each step is safe if a crash stops it halfway.
 
 1. Ensure the worktree (create or re-attach `worktrees/<id>` on `chef/<id>` from the base branch).
-2. Write `runs/<n>.prompt.md`. For a relaunch it holds the pending inbox messages.
+2. Write `runs/<n>.prompt.md`. The brief plus the pending inbox messages until a run has delivered the brief, then only the messages. An interrupted launch reuses its prompt and appends new messages.
 3. Move those messages to `inbox/handled/`.
-4. Create `runs/<n>.jsonl` with O_EXCL (the claim). A failed claim means another launch won. Stop.
+4. Create `runs/<n>.jsonl` with O_EXCL (the claim) and open `runs/<n>.err` for append. A failed claim means another launch won. Stop.
 5. Spawn `pi --mode json -p --session-id <uuid> --session-dir <task>/session -e <chef entry> [--model] [--thinking] [cookArgs...] @<prompt file>`, detached in its own process group, stdin `ignore`, stdout to the claimed file, stderr to `runs/<n>.err`, env `CHEF_ROLE=cook`, `CHEF_TASK_DIR=<task dir>`, `CHEF_SESSION_ID=<uuid>`.
 
 The child runs the same Pi as the chef: `process.execPath` plus `process.argv[1]` when Pi runs under Node, `process.execPath` alone for the compiled binary. It never resolves `pi` from `PATH`.

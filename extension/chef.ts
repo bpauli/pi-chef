@@ -284,6 +284,7 @@ export function installChef(pi: ExtensionAPI): void {
       const board = await k.board();
       const cooks = `${board.cooks.busy}/${board.cooks.cap} cooks busy`;
       if (view.state.kind === "cooking") return text(`${view.spec.id} is cooking on branch ${view.spec.branch} (${cooks}). You will get a kitchen update when it needs you.`);
+      if (view.state.kind === "idle") return text(`${view.spec.id} failed to launch: ${view.state.outcome.kind === "failed" ? view.state.outcome.reason : outcomeText(view.state.outcome)}. Fix the cause, then chef_send ${view.spec.id} to retry.`);
       const queue = board.open.filter((v) => v.state.kind === "queued").sort((a, b) => a.spec.createdAt - b.spec.createdAt);
       return text(`${view.spec.id} is queued, position ${queue.findIndex((v) => v.spec.id === view.spec.id) + 1} (${cooks}). It starts when a cook frees up.`);
     },

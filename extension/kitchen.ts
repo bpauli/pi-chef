@@ -16,12 +16,13 @@ import {
   type RunNo,
   type SessionId,
   type TaskId,
+  type TaskSpec,
   type TaskView,
   millis,
   parseProjectName,
 } from "./domain.ts";
 import { type Action, type GitFacts, type LiveCooks, type TaskRecord, closeVerdict, deriveTask, nextRunOf, plan } from "./derive.ts";
-import { CookTable, type PiInvocation, firstPrompt, followUpPrompt, launchCook, messagesSection, pidStart, signalCook } from "./cooks.ts";
+import { type CookEnd, CookTable, type PiInvocation, firstPrompt, followUpPrompt, launchCook, messagesSection, pidStart, signalCook } from "./cooks.ts";
 import { diffstat, ensureWorktree, gitFacts, inspectRepo, removeWorktree } from "./git.ts";
 import { RunTails, type Store } from "./store.ts";
 
@@ -336,15 +337,15 @@ export class Kitchen extends KitchenReader {
     const errors: string[] = [];
     let launched = false;
     for (const action of actions) {
+      launched ||= action.kind === "launch";
       try {
         if (action.kind === "notify") notices.push(action.notice);
         else await this.execute(action, records.find((r) => r.spec.id === action.task)!);
-        launched ||= action.kind === "launch";
       } catch (e) {
         errors.push(`${action.kind} ${"task" in action ? action.task : ""}: ${(e as Error).message}`);
       }
     }
-    // A launch changes the views this tick reports: the board shows the cook, not the queue.
+    // A launch attempt changes the views this tick reports: the board shows the cook or the failure, not the queue.
     const fresh = launched ? plan({ records: this.loadRecords(), live: await this.cooks.live(), now: this.now(), cap, killGraceMs: 0 }).views : views;
     return { kind: "ok", board: this.boardOf(fresh, "owner", holderOf(this.store.readLease())), notices, errors };
   }
@@ -352,35 +353,14 @@ export class Kitchen extends KitchenReader {
   private async execute(action: Exclude<Action, { kind: "notify" }>, rec: TaskRecord): Promise<void> {
     const { spec } = rec;
     switch (action.kind) {
-      case "launch": {
-        const project = this.requireProject(spec.project);
-        await ensureWorktree(project.path, spec.worktree, spec.branch, spec.baseBranch);
-        const pending = this.store.pendingMessages(spec.id);
-        const texts = pending.map((m) => m.text);
-        if (action.reusePrompt) {
-          const existing = this.store.readPrompt(spec.id, action.run) ?? "";
-          if (texts.length) this.store.writePrompt(spec.id, action.run, `${existing.trimEnd()}\n\n${messagesSection(texts).join("\n")}\n`);
-        } else {
-          this.store.writePrompt(spec.id, action.run, action.run === 1 ? firstPrompt(spec, project, texts) : followUpPrompt(texts));
+      case "launch":
+        try {
+          await this.launch(action, spec);
+        } catch (e) {
+          this.store.appendEvent(spec.id, { type: "launch_failed", at: this.now(), run: action.run, reason: (e as Error).message });
+          throw e;
         }
-        this.store.moveToHandled(spec.id, pending.map((m) => m.file));
-        if (action.reclaim) this.store.releaseEmptyClaim(spec.id, action.run);
-        const fds = this.store.claimRun(spec.id, action.run);
-        if (!fds) return;
-        const pid = launchCook({
-          pi: this.deps.pi,
-          chefEntry: this.deps.chefEntry,
-          spec,
-          run: action.run,
-          promptFile: this.store.runPrompt(spec.id, action.run),
-          sessionDir: this.store.sessionDir(spec.id),
-          taskDir: this.store.taskDir(spec.id),
-          config: this.store.readConfig(),
-          fds,
-        });
-        this.cooks.record(spec.sessionId, pid);
         return;
-      }
       case "signal":
         await signalCook(action.pid, spec.sessionId, action.signal);
         return;
@@ -390,6 +370,50 @@ export class Kitchen extends KitchenReader {
         return;
       }
     }
+  }
+
+  private async launch(action: Extract<Action, { kind: "launch" }>, spec: TaskSpec): Promise<void> {
+    const project = this.requireProject(spec.project);
+    await ensureWorktree(project.path, spec.worktree, spec.branch, spec.baseBranch);
+    const pending = this.store.pendingMessages(spec.id);
+    const texts = pending.map((m) => m.text);
+    if (action.prompt === "existing") {
+      const existing = this.store.readPrompt(spec.id, action.run) ?? "";
+      if (texts.length) this.store.writePrompt(spec.id, action.run, `${existing.trimEnd()}\n\n${messagesSection(texts).join("\n")}\n`);
+    } else {
+      this.store.writePrompt(spec.id, action.run, action.prompt === "brief" ? firstPrompt(spec, project, texts) : followUpPrompt(texts));
+    }
+    this.store.moveToHandled(spec.id, pending.map((m) => m.file));
+    if (action.reclaim) this.store.releaseEmptyClaim(spec.id, action.run);
+    const fds = this.store.claimRun(spec.id, action.run);
+    if (!fds) return;
+    const pid = launchCook(
+      {
+        pi: this.deps.pi,
+        chefEntry: this.deps.chefEntry,
+        spec,
+        run: action.run,
+        promptFile: this.store.runPrompt(spec.id, action.run),
+        sessionDir: this.store.sessionDir(spec.id),
+        taskDir: this.store.taskDir(spec.id),
+        config: this.store.readConfig(),
+        fds,
+      },
+      (end) => this.cookEnded(spec.id, action.run, end),
+    );
+    if (pid !== undefined) this.cooks.record(spec.sessionId, pid);
+  }
+
+  /**
+   * A cook that exits before its first output line failed to launch (a bad model,
+   * a broken extension, a missing binary). Recording it stops the tick from
+   * respawning it every second. A run that produced output follows the file rules.
+   */
+  private cookEnded(task: TaskId, run: RunNo, end: CookEnd): void {
+    const reason = end.kind === "error" ? end.message : `cook exited with ${end.signal ?? `code ${end.code}`} before its first output line`;
+    void this.mutate(async () => {
+      if (this.store.runBytes(task, run) === 0) this.store.appendEvent(task, { type: "launch_failed", at: this.now(), run, reason });
+    }).catch(() => undefined);
   }
 
   /** Inside a mutation: the tick body runs directly, the chain is already held. */
