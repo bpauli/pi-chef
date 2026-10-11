@@ -356,9 +356,7 @@ export class Store {
     const dir = this.inboxDir(id);
     mkdirSync(join(dir, "handled"), { recursive: true });
     const file = `${String(at).padStart(13, "0")}-${randomBytes(2).toString("hex")}.msg`;
-    const tmp = join(dir, `.tmp-${randomBytes(4).toString("hex")}`);
-    writeFileSync(tmp, text);
-    renameSync(tmp, join(dir, file));
+    writeAtomic(join(dir, file), text);
     return { file, at, text };
   }
 
