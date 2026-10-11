@@ -8,6 +8,7 @@ chef is a Pi package. One chef session dispatches and monitors cooks (child Pi p
 npm install          # dev dependencies, including a pinned pi 1.0.3 for tests
 npm run typecheck    # tsc --noEmit, strict
 npm test             # node --test: unit, git, and offline e2e tests with the fake model
+CHEF_TEST_PI=$(readlink -f $(which pi)) node --test test/chef.test.ts   # chef e2e on an installed Pi binary
 npm run check        # both
 pi -e ./extension/index.ts --chef   # try it in a real Pi session
 ```

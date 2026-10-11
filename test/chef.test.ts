@@ -39,9 +39,13 @@ interface Event {
 
 /** Starts a chef Pi and collects its JSON events with an LF-only splitter. */
 function startPi(mode: "json" | "rpc", extra: string[], prompt?: string): { proc: ChildProcess; events: Event[]; exited: Promise<number | null> } {
-  const args = [PI_CLI, "--mode", mode, "--no-session", "-ne", "-e", CHEF_ENTRY, "-e", FAKE_PROVIDER, "--model", FAKE_MODEL, ...extra];
+  const args = ["--mode", mode, "--no-session", "-ne", "-e", CHEF_ENTRY, "-e", FAKE_PROVIDER, "--model", FAKE_MODEL, ...extra];
   if (mode === "json") args.push("-p", prompt ?? "STEP say: hi");
-  const proc = spawn(process.execPath, args, { stdio: ["pipe", "pipe", "inherit"], env: { ...process.env } });
+  // CHEF_TEST_PI runs the chef on another Pi build, such as the compiled binary users install.
+  const bin = process.env.CHEF_TEST_PI;
+  const proc = bin
+    ? spawn(bin, args, { stdio: ["pipe", "pipe", "inherit"], env: { ...process.env } })
+    : spawn(process.execPath, [PI_CLI, ...args], { stdio: ["pipe", "pipe", "inherit"], env: { ...process.env } });
   children.push(proc);
   const events: Event[] = [];
   const decoder = new StringDecoder("utf8");

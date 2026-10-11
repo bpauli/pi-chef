@@ -54,7 +54,7 @@ The kitchen lives in `<pi agent dir>/chef` (usually `~/.pi/agent/chef`). Set `CH
 ```json
 {
   "maxCooks": 3,
-  "model": "anthropic/claude-sonnet-4-5",
+  "model": "anthropic/claude-sonnet-5-5",
   "thinking": "medium",
   "cookArgs": ["--no-skills"]
 }
