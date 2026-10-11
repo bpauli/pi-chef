@@ -38,9 +38,10 @@ export function installCook(pi: ExtensionAPI, env: NodeJS.ProcessEnv): void {
   const spec = parseFile(TaskSpecSchema, specPath, readFileSync(specPath, "utf8")) as TaskSpec;
   const inbox = join(taskDir, "inbox");
   let timer: NodeJS.Timeout | undefined;
-  // Set at agent_before_settle: a message that arrives later stays in the inbox
-  // for the owner to relaunch, since a steer after settle would be lost.
-  let closing = false;
+  // A steer lands only inside a turn. Before the first turn it races the print-mode
+  // prompt, after agent_before_settle or a stop signal the run is ending, and in
+  // both cases a claimed message would be lost. Unclaimed, it waits for the relaunch.
+  let claimable = false;
 
   pi.registerTool({
     name: "chef_report",
@@ -63,7 +64,7 @@ export function installCook(pi: ExtensionAPI, env: NodeJS.ProcessEnv): void {
   pi.on("before_agent_start", (event) => ({ systemPrompt: `${event.systemPrompt}\n\n${cookContract(spec)}` }));
 
   const poll = () => {
-    if (closing) return;
+    if (!claimable) return;
     let files: string[];
     try {
       files = readdirSync(inbox).filter((f) => f.endsWith(".msg")).sort();
@@ -83,15 +84,22 @@ export function installCook(pi: ExtensionAPI, env: NodeJS.ProcessEnv): void {
     }
   };
 
+  const stopClaiming = () => {
+    claimable = false;
+  };
   pi.on("session_start", () => {
     timer ??= setInterval(poll, INBOX_POLL_MS);
     timer.unref();
   });
-  pi.on("agent_before_settle", () => {
-    closing = true;
+  pi.on("turn_start", () => {
+    claimable = true;
   });
+  pi.on("agent_before_settle", stopClaiming);
   pi.on("session_shutdown", () => {
+    stopClaiming();
     if (timer) clearInterval(timer);
     timer = undefined;
   });
+  // Pi's own handlers for these signals dispose the session and exit. Ours only closes the inbox first.
+  for (const signal of ["SIGTERM", "SIGHUP"] as const) process.on(signal, stopClaiming);
 }

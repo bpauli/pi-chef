@@ -205,7 +205,8 @@ function fold(rec: TaskRecord): Folded {
   const fromRuns = last === undefined ? 1 : started ? last.n + 1 : last.n;
   const nextRun = runNo(Math.max(fromRuns, launchFailure ? launchFailure.run + 1 : 1));
   const holdAt = Math.max(lastStop?.at ?? Number.NEGATIVE_INFINITY, launchFailure?.at ?? Number.NEGATIVE_INFINITY);
-  const resumable = rec.pendingAt.some((at) => at > holdAt);
+  // Same millisecond: the chain wrote the hold first, so the message is the newer fact.
+  const resumable = rec.pendingAt.some((at) => at >= holdAt);
   return {
     last,
     nextRun,

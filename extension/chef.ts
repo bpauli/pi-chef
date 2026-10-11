@@ -366,8 +366,10 @@ export function installChef(pi: ExtensionAPI): void {
           return text(`${id} restarts with your message when a cook frees up (position ${d.position}).`);
         case "exiting":
           return text(`${id} holds your message. Its last cook reported and is still exiting. chef restarts ${id} with your message as soon as it has exited.`);
-        case "held":
-          return text(`${id} holds your message. It is stopped; send again to resume it.`);
+        case "after-stop":
+          return text(`${id} is stopping. Your message waits in its inbox and restarts ${id} as soon as the cook has exited.`);
+        case "launch-failed":
+          return text(`${id} could not restart with your message: ${d.reason} Fix the cause, then chef_send ${id} again.`);
       }
     },
   });

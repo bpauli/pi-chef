@@ -23,7 +23,7 @@ import {
   parseModel,
   parseProjectName,
 } from "./domain.ts";
-import { type Action, type GitFacts, type LiveCooks, type PlanInput, type TaskRecord, closeVerdict, deriveTask, nextRunOf, plan } from "./derive.ts";
+import { type Action, type GitFacts, type LiveCooks, type PlanInput, type TaskRecord, closeVerdict, deriveTask, nextRunOf, plan, stateText } from "./derive.ts";
 import { type CookEnd, CookTable, type PiInvocation, firstPrompt, followUpPrompt, launchCook, messagesSection, pidStart, signalCook } from "./cooks.ts";
 import { type RemoveResult, diffstat, ensureWorktree, gitFacts, inspectRepo, removeWorktree, verifyBaseBranch } from "./git.ts";
 import { RunTails, type Snapshot, type Store } from "./store.ts";
@@ -60,7 +60,10 @@ export type Delivery =
   | { kind: "queued"; position: number }
   /** The last cook reported and has not exited within `exitWaitMs`. The tick relaunches when it does. */
   | { kind: "exiting" }
-  | { kind: "held" };
+  /** The cook was stopped and is exiting. The message relaunches the task when it has. */
+  | { kind: "after-stop" }
+  /** The relaunch with the message failed on the spot. */
+  | { kind: "launch-failed"; reason: string };
 
 export interface TaskResult {
   view: TaskView;
@@ -292,12 +295,15 @@ export class Kitchen extends KitchenReader {
         if (report.kind === "lost") throw lostError(report.holder);
         const state = report.board.open.find((v) => v.spec.id === task)?.state;
         if (state?.kind === "cooking") {
+          // A stopped cook no longer reads its inbox; the message relaunches the task once it has exited.
+          if (rec.events.some((e) => e.type === "stop" && e.run === state.run)) return { kind: "after-stop" };
           // The same run with output is still the cook that was there (or one the launch rescan found): the message steers it.
           const last = rec.runs.at(-1);
           const sameRun = last !== undefined && last.n === state.run && last.bytes > 0;
           return sameRun ? { kind: "steer" } : { kind: "relaunched", run: state.run };
         }
-        if (state?.kind !== "queued") return { kind: "held" };
+        if (state?.kind === "idle" && state.outcome.kind === "failed") return { kind: "launch-failed", reason: state.outcome.reason };
+        if (state?.kind !== "queued") throw new ChefError(`${task} did not take the message: it is ${state ? stateText(state) : "gone"}.`);
         if (!(await this.cooks.live()).has(rec.spec.sessionId)) {
           const queue = report.board.open.filter((v) => v.state.kind === "queued").sort((a, b) => a.spec.createdAt - b.spec.createdAt);
           return { kind: "queued", position: queue.findIndex((v) => v.spec.id === task) + 1 };

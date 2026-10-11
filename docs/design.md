@@ -108,7 +108,7 @@ A launch that produces no output is a failure, not a retry. Three facts derive i
 
 The task derives `idle(failed)` for that run, with the event reason plus the err tail, and the chef gets a wake. The run number is used up: the retry is the next run. A message newer than the failure resumes the task as `queued(message)`. The relaunch prompt is the brief plus the messages when no run has delivered the brief yet (`prompted`: the run file holds a user `message_end`), else only the messages. `chef_dispatch` answers `failed to launch: <reason>` when the first tick fails the launch.
 
-A `stop` event holds a task. A pending message older than the last stop does not relaunch it; the next newer message does, and the relaunch prompt carries every pending message. A held task is `idle(stopped)`.
+A `stop` event holds a task. A pending message older than the last stop does not relaunch it; the next newer message does, and the relaunch prompt carries every pending message. A message with the same millisecond as the stop counts as newer: the serialized chain wrote the stop first. A held task is `idle(stopped)`.
 
 ## Cook identity and liveness
 
@@ -177,7 +177,7 @@ Chef mode persists as a `chef-mode` session entry (`pi.appendEntry`), so a resum
 
 - `chef_report`, as above.
 - A cook contract appended to the system prompt in `before_agent_start`: work only in this worktree, commit on the task branch, never wait for a human, end every run with exactly one `chef_report`.
-- The inbox poller (300 ms). It renames a message into `handled/` first, then calls `pi.sendUserMessage(text, { deliverAs: "steer" })`. On `agent_before_settle` it sets a closing flag and stops claiming, so a late message stays in the inbox for the owner to relaunch.
+- The inbox poller (300 ms). It claims only while a turn is active: `turn_start` opens the window, `agent_before_settle`, `session_shutdown`, SIGTERM, and SIGHUP close it. Inside the window it renames a message into `handled/` first, then calls `pi.sendUserMessage(text, { deliverAs: "steer" })`. Outside it (before the first turn, where a steer races the print-mode prompt; while the run ends; while the cook dies after a stop) the message stays in the inbox for the owner to relaunch. `chef_send` to a cook that is being stopped answers `after-stop`: the message restarts the task once the cook has exited.
 
 Double loading is guarded with `globalThis[Symbol.for("chef.loaded")]`. The guard is cleared on `session_shutdown`, so `/reload` registers the tools again.
 
