@@ -174,10 +174,10 @@ test("loadRecord folds the run files, counts pending messages, and skips a torn 
     const rec = store.loadRecord(id, tails);
     assert.deepEqual(rec.events, [{ type: "notified", at: 5, run: 1 }]);
     assert.equal(rec.runs.length, 2);
-    assert.equal(rec.runs[0]!.claimed, true);
+    assert.equal(rec.runs[0]!.claim.kind, "started");
     assert.equal(rec.runs[0]!.facts.settled, true);
     assert.equal(rec.runs[0]!.stderrTail, "");
-    assert.equal(rec.runs[1]!.claimed, false);
+    assert.equal(rec.runs[1]!.claim.kind, "none");
     assert.deepEqual(rec.pendingAt, [1700000000001]);
     assert.equal(rec.worktreeExists, true);
     assert.equal(store.loadRecord(id, tails).runs[0]!.facts.settled, true);

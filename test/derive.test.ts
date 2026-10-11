@@ -53,7 +53,7 @@ function spec(over: Partial<TaskSpec> = {}): TaskSpec {
 }
 
 function run(n: number, facts: Partial<RunFacts>, over: Partial<RunRecord> = {}): RunRecord {
-  return { n: runNo(n), claimed: true, bytes: 100, claimedAt: millis(900), facts: { ...EMPTY_RUN, prompted: true, ...facts }, stderrTail: "", ...over };
+  return { n: runNo(n), claim: { kind: "started", at: millis(900) }, facts: { ...EMPTY_RUN, prompted: true, ...facts }, stderrTail: "", ...over };
 }
 
 function record(over: Partial<TaskRecord> = {}): TaskRecord {
@@ -177,7 +177,7 @@ test("tool_execution_start sets the activity to the tool and its argument, cappe
 });
 
 test("a live process on an unsettled run is cooking, even while the run file is still empty", () => {
-  const rec = record({ runs: [run(1, {}, { bytes: 0 })] });
+  const rec = record({ runs: [run(1, {}, { claim: { kind: "empty", at: millis(900) } })] });
   const view = deriveTask(rec, live(), NOW);
   assert.equal(view.state.kind, "cooking");
   assert.equal(view.state.kind === "cooking" && view.state.run, 1);
@@ -215,17 +215,17 @@ test("a clean settle without chef_report is done with reported false and the fin
 });
 
 test("a prompt file without a run file is queued as an interrupted launch", () => {
-  const rec = record({ runs: [run(1, {}, { claimed: false, bytes: 0 })] });
+  const rec = record({ runs: [run(1, {}, { claim: { kind: "none" } })] });
   assert.deepEqual(deriveTask(rec, none, NOW).state, { kind: "queued", why: "interrupted-launch" });
 });
 
 test("an empty run file with no live process and an empty err file is an interrupted launch, not a failure", () => {
-  const rec = record({ runs: [run(1, {}, { bytes: 0 })] });
+  const rec = record({ runs: [run(1, {}, { claim: { kind: "empty", at: millis(900) } })] });
   assert.deepEqual(deriveTask(rec, none, NOW).state, { kind: "queued", why: "interrupted-launch" });
 });
 
 test("an empty run file with no live process and a non-empty err file is a failed launch that used its run number up", () => {
-  const rec = record({ runs: [run(1, { prompted: false }, { bytes: 0, claimedAt: millis(7000), stderrTail: 'Error: Model "nope/none" not found.\n' })] });
+  const rec = record({ runs: [run(1, { prompted: false }, { claim: { kind: "empty", at: millis(7000) }, stderrTail: 'Error: Model "nope/none" not found.\n' })] });
   assert.deepEqual(deriveTask(rec, none, NOW).state, {
     kind: "idle",
     run: 1,
@@ -343,8 +343,8 @@ test("plan never launches a task whose session still has a live process", () => 
 });
 
 test("plan relaunches an interrupted launch with the existing prompt, and reclaims an empty run file", () => {
-  const promptOnly = record({ runs: [run(1, {}, { claimed: false, bytes: 0 })] });
-  const emptyClaim = record({ spec: spec({ id: id("api-2"), sessionId: "s2" as TaskSpec["sessionId"] }), runs: [run(1, {}, { bytes: 0 })] });
+  const promptOnly = record({ runs: [run(1, {}, { claim: { kind: "none" } })] });
+  const emptyClaim = record({ spec: spec({ id: id("api-2"), sessionId: "s2" as TaskSpec["sessionId"] }), runs: [run(1, {}, { claim: { kind: "empty", at: millis(900) } })] });
   const { actions } = plan({ ...base, records: [promptOnly, emptyClaim] });
   assert.deepEqual(actions, [
     { kind: "launch", task: "api-1", run: 1, prompt: "existing", reclaim: false },
@@ -377,10 +377,10 @@ test("a cook still alive after its run settled gets SIGTERM after the exit grace
 });
 
 test("an empty claim younger than the reclaim threshold is left alone, an older one is reclaimed", () => {
-  const young = record({ runs: [run(1, { prompted: false }, { bytes: 0, claimedAt: millis(NOW - 5000) })] });
+  const young = record({ runs: [run(1, { prompted: false }, { claim: { kind: "empty", at: millis(NOW - 5000) } })] });
   assert.deepEqual(deriveTask(young, none, NOW).state, { kind: "queued", why: "interrupted-launch" });
   assert.deepEqual(plan({ ...base, records: [young] }).actions, []);
-  const old = record({ runs: [run(1, { prompted: false }, { bytes: 0, claimedAt: millis(NOW - 31_000) })] });
+  const old = record({ runs: [run(1, { prompted: false }, { claim: { kind: "empty", at: millis(NOW - 31_000) } })] });
   assert.deepEqual(plan({ ...base, records: [old] }).actions, [{ kind: "launch", task: "api-1", run: 1, prompt: "existing", reclaim: true }]);
 });
 
@@ -399,7 +399,7 @@ test("a closed task with a worktree yields remove-worktree, and its live cook is
 test("plan on the state its own launches produce yields no new launch (idempotent)", () => {
   const first = plan({ ...base, records: [record()] });
   assert.equal(first.actions.filter((a) => a.kind === "launch").length, 1);
-  const after = record({ runs: [run(1, {}, { bytes: 0 })] });
+  const after = record({ runs: [run(1, {}, { claim: { kind: "empty", at: millis(900) } })] });
   const second = plan({ ...base, records: [after], live: live() });
   assert.deepEqual(second.actions, []);
 });

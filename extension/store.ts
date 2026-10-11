@@ -39,7 +39,7 @@ import {
   millis,
   runNo,
 } from "./domain.ts";
-import { EMPTY_RUN, type RunFacts, type RunRecord, type TaskRecord, foldRunLine } from "./derive.ts";
+import { type Claim, EMPTY_RUN, type RunFacts, type RunRecord, type TaskRecord, foldRunLine } from "./derive.ts";
 
 export function kitchenDir(env: NodeJS.ProcessEnv, agentDir: string): string {
   return env.CHEF_HOME || join(agentDir, "chef");
@@ -267,21 +267,14 @@ export class Store {
       .sort((a, b) => a - b);
     const runs = ns.map((n): RunRecord => {
       const path = this.runFile(id, runNo(n));
-      let bytes = -1;
-      let claimedAt: Millis | undefined;
-      try {
-        const st = statSync(path);
-        bytes = st.size;
-        claimedAt = millis(Math.round(st.mtimeMs));
-      } catch (e) {
-        if (!isCode(e, "ENOENT")) throw e;
-      }
-      const claimed = bytes >= 0;
-      const facts = claimed ? tails.get(path).poll() : EMPTY_RUN;
-      const stderrTail = claimed && !facts.settled ? this.tail(this.runErr(id, runNo(n))) : "";
-      return { n: runNo(n), claimed, bytes: Math.max(0, bytes), claimedAt, facts, stderrTail };
+      const st = statSync(path, { throwIfNoEntry: false });
+      const at = st && millis(Math.round(st.mtimeMs));
+      const claim: Claim = at === undefined ? { kind: "none" } : st?.size ? { kind: "started", at } : { kind: "empty", at };
+      const facts = claim.kind === "none" ? EMPTY_RUN : tails.get(path).poll();
+      const stderrTail = claim.kind !== "none" && !facts.settled ? this.tail(this.runErr(id, runNo(n))) : "";
+      return { n: runNo(n), claim, facts, stderrTail };
     });
-    const claimed = new Set(runs.filter((r) => r.claimed).map((r) => r.n));
+    const claimed = new Set(runs.filter((r) => r.claim.kind !== "none").map((r) => r.n));
     return {
       spec,
       // Before `hold` existed, a hold was logged as a `stop` that names a run that was never claimed.

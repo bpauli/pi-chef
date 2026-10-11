@@ -114,11 +114,11 @@ export function oneLine(text: string, max: number): string {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
+export type Claim = { kind: "none" } | { kind: "empty"; at: Millis } | { kind: "started"; at: Millis };
+
 export interface RunRecord {
   n: RunNo;
-  claimed: boolean;
-  bytes: number;
-  claimedAt: Millis | undefined;
+  claim: Claim;
   facts: RunFacts;
   stderrTail: string;
 }
@@ -155,14 +155,14 @@ const errTail = (text: string): string => text.trim().split("\n").filter(Boolean
 
 function launchFailureOf(rec: TaskRecord, last: RunRecord | undefined): LaunchFailure | undefined {
   const event = rec.events.filter((e) => e.type === "launch_failed").at(-1);
-  const emptyClaim = last !== undefined && last.claimed && last.bytes === 0 ? last : undefined;
-  const tail = emptyClaim ? errTail(emptyClaim.stderrTail) : "";
-  if (event && !rec.runs.some((r) => r.n === event.run && r.bytes > 0) && (last === undefined || event.run >= last.n)) {
+  const emptyClaim = last?.claim.kind === "empty" ? { n: last.n, at: last.claim.at, tail: errTail(last.stderrTail) } : undefined;
+  const tail = emptyClaim?.tail ?? "";
+  if (event && !rec.runs.some((r) => r.n === event.run && r.claim.kind === "started") && (last === undefined || event.run >= last.n)) {
     const detail = tail && emptyClaim?.n === event.run ? `${event.reason}: ${tail}` : event.reason;
     return { run: runNo(event.run), at: millis(event.at), reason: detail };
   }
   if (emptyClaim && tail) {
-    return { run: emptyClaim.n, at: emptyClaim.claimedAt ?? millis(0), reason: `cook exited before its first output line: ${tail}` };
+    return { run: emptyClaim.n, at: emptyClaim.at, reason: `cook exited before its first output line: ${tail}` };
   }
   return undefined;
 }
@@ -173,7 +173,7 @@ function fold(rec: TaskRecord): Folded {
   const lastPause = rec.events.filter((e) => e.type === "stop" || e.type === "hold").at(-1);
   const closed = rec.events.find((e) => e.type === "closed");
   const launchFailure = launchFailureOf(rec, last);
-  const started = last !== undefined && last.claimed && last.bytes > 0;
+  const started = last?.claim.kind === "started";
   const fromRuns = last === undefined ? 1 : started ? last.n + 1 : last.n;
   const nextRun = runNo(Math.max(fromRuns, launchFailure ? launchFailure.run + 1 : 1));
   const holdAt = Math.max(lastPause?.at ?? Number.NEGATIVE_INFINITY, launchFailure?.at ?? Number.NEGATIVE_INFINITY);
@@ -200,15 +200,15 @@ export function deriveTask(rec: TaskRecord, live: LiveCooks, now: Millis): TaskV
   const { last, lastStop, lastPause, closed, launchFailure, resumable, held } = fold(rec);
   if (closed) return view({ kind: "closed", at: millis(closed.at), discarded: closed.discarded });
   const pid = live.get(rec.spec.sessionId);
-  if (pid !== undefined && last?.claimed && !last.facts.settled) {
-    return view({ kind: "cooking", run: last.n, since: last.facts.startedAt ?? last.claimedAt ?? now, activity: last.facts.activity });
+  if (pid !== undefined && last !== undefined && last.claim.kind !== "none" && !last.facts.settled) {
+    return view({ kind: "cooking", run: last.n, since: last.facts.startedAt ?? last.claim.at, activity: last.facts.activity });
   }
   if (launchFailure) {
     if (resumable) return view({ kind: "queued", why: "message" });
     return view({ kind: "idle", run: launchFailure.run, since: launchFailure.at, outcome: { kind: "failed", reason: launchFailure.reason } });
   }
   const stopped = (run: RunNo | undefined): TaskView => view({ kind: "idle", run, since: millis(lastPause?.at ?? now), outcome: { kind: "stopped" } });
-  if (last && (!last.claimed || last.bytes === 0)) return held ? stopped(rec.runs.at(-2)?.n) : view({ kind: "queued", why: "interrupted-launch" });
+  if (last && last.claim.kind !== "started") return held ? stopped(rec.runs.at(-2)?.n) : view({ kind: "queued", why: "interrupted-launch" });
   if (resumable) return view({ kind: "queued", why: "message" });
   if (!last) return held ? stopped(undefined) : view({ kind: "queued", why: "new" });
   if (held) return stopped(last.n);
@@ -289,7 +289,7 @@ export function plan(input: PlanInput): { views: TaskView[]; actions: Action[] }
     const notice = noticeFor(rec, view);
     if (notice) actions.push({ kind: "notify", notice });
     if (pid !== undefined && last?.facts.settled) {
-      const settledAt = last.facts.lastAt ?? last.claimedAt ?? now;
+      const settledAt = last.facts.lastAt ?? (last.claim.kind === "none" ? now : last.claim.at);
       if (now - settledAt > exitGraceMs) actions.push({ kind: "signal", task: rec.spec.id, pid, signal: escalate(settledAt + exitGraceMs) });
     }
   }
@@ -300,10 +300,10 @@ export function plan(input: PlanInput): { views: TaskView[]; actions: Action[] }
     if (live.has(rec.spec.sessionId)) continue;
     const { last, nextRun, briefDelivered } = fold(rec);
     const reuse = last !== undefined && last.n === nextRun;
-    const reclaim = reuse && last.claimed;
-    if (reclaim && now - (last.claimedAt ?? now) < reclaimAfterMs) continue;
+    const emptyClaim = reuse && last.claim.kind === "empty" ? last.claim : undefined;
+    if (emptyClaim && now - emptyClaim.at < reclaimAfterMs) continue;
     const prompt = reuse ? "existing" : briefDelivered ? "messages" : "brief";
-    actions.push({ kind: "launch", task: rec.spec.id, run: nextRun, prompt, reclaim });
+    actions.push({ kind: "launch", task: rec.spec.id, run: nextRun, prompt, reclaim: emptyClaim !== undefined });
     busy += 1;
   }
   return { views, actions };

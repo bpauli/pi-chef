@@ -124,7 +124,7 @@ export class KitchenReader {
     const project = this.store.readProject(rec.spec.project);
     const git = project ? await gitFacts(project.path, rec.spec.worktree, rec.spec.branch, rec.spec.baseBranch) : undefined;
     const stat = project && git ? await diffstat(project.path, rec.spec.branch, rec.spec.baseBranch) : "";
-    const last = rec.runs.filter((r) => r.claimed).at(-1);
+    const last = rec.runs.filter((r) => r.claim.kind !== "none").at(-1);
     return {
       view,
       project,
@@ -144,7 +144,7 @@ export class KitchenReader {
     const candidates = new Set<string>();
     const unknown = records.filter((rec) => {
       const last = rec.runs.at(-1);
-      if (!last?.claimed || last.facts.settled || live.has(rec.spec.sessionId)) return false;
+      if (last === undefined || last.claim.kind === "none" || last.facts.settled || live.has(rec.spec.sessionId)) return false;
       const key = `${rec.spec.id}#${last.n}`;
       candidates.add(key);
       if (this.scanned.has(key)) return false;
@@ -259,7 +259,7 @@ export class Kitchen extends KitchenReader {
         if (state?.kind === "cooking") {
           if (rec.events.some((e) => e.type === "stop" && e.run === state.run)) return { kind: "after-stop" };
           const last = rec.runs.at(-1);
-          const sameRun = last !== undefined && last.n === state.run && last.bytes > 0;
+          const sameRun = last !== undefined && last.n === state.run && last.claim.kind === "started";
           return sameRun ? { kind: "steer" } : { kind: "relaunched", run: state.run };
         }
         if (state?.kind === "idle" && state.outcome.kind === "failed") return { kind: "launch-failed", reason: state.outcome.reason };
