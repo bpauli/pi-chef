@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ChefError, type TaskId, type TaskSpec, millis, parseProjectName, runNo } from "../extension/domain.ts";
+import { EMPTY_RUN } from "../extension/derive.ts";
 import { RunTail, RunTails, Store } from "../extension/store.ts";
 
 function withDir(run: (dir: string) => void): void {
@@ -35,13 +36,13 @@ const line = (type: string, extra: Record<string, unknown> = {}) => `${JSON.stri
 test("RunTail reads only appended bytes and keeps a partial last line for the next poll", () => {
   withDir((dir) => {
     const path = join(dir, "1.jsonl");
-    writeFileSync(path, line("session", { timestamp: "2026-01-01T00:00:00.000Z" }) + line("turn_start") + '{"type":"turn_st');
+    writeFileSync(path, line("session", { timestamp: "2026-01-01T00:00:00.000Z" }) + line("turn_start") + '{"type":"agent_sett');
     const tail = new RunTail(path);
-    assert.equal(tail.poll().turns, 1);
-    appendFileSync(path, 'art"}\n' + line("agent_settled"));
+    assert.deepEqual(tail.poll(), { ...EMPTY_RUN, activity: { kind: "thinking" } }, "the torn last line is not folded yet");
+    appendFileSync(path, 'led"}\n' + line("tool_execution_start", { toolName: "bash", args: { command: "ls" } }));
     const facts = tail.poll();
-    assert.equal(facts.turns, 2);
     assert.equal(facts.settled, true);
+    assert.deepEqual(facts.activity, { kind: "tool", tool: "bash", detail: "ls" });
   });
 });
 
@@ -70,11 +71,11 @@ test("RunTail decodes a multi-byte character split across two appends", () => {
 test("RunTail starts over when the file shrinks (an empty claim was reclaimed)", () => {
   withDir((dir) => {
     const path = join(dir, "1.jsonl");
-    writeFileSync(path, line("turn_start") + line("turn_start"));
+    writeFileSync(path, line("turn_start") + line("agent_settled"));
     const tail = new RunTail(path);
-    assert.equal(tail.poll().turns, 2);
+    assert.equal(tail.poll().settled, true);
     writeFileSync(path, line("turn_start"));
-    assert.equal(tail.poll().turns, 1);
+    assert.equal(tail.poll().settled, false, "a shorter file is a new run file: the old facts are dropped");
   });
 });
 

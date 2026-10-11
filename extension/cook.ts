@@ -11,7 +11,7 @@ import { parseFile } from "./store.ts";
 
 const INBOX_POLL_MS = 300;
 
-/** Fixed text, so it is cache-stable across cooks. Task values come from task.json. */
+/** The cook's half of the system prompt. Task values come from task.json, the rest is the same for every cook. */
 export function cookContract(spec: TaskSpec): string {
   return [
     `You are a cook in chef's kitchen: a Pi agent that works alone on task ${spec.id} "${spec.title}". No human watches this run.`,

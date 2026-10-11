@@ -183,7 +183,7 @@ Double loading is guarded with `globalThis[Symbol.for("chef.loaded")]`. The guar
 
 ## Module map
 
-About 2k lines of source. Any flow passes through at most three files: tool, then `kitchen.ts`, then one of `store`, `cooks`, `git`, `derive`.
+About 2.8k lines of source. Any flow passes through at most three files: tool, then `kitchen.ts`, then one of `store`, `cooks`, `git`, `derive`.
 
 | Module | Owns |
 |---|---|
@@ -227,7 +227,7 @@ PR creation or merge automation (a brief can tell the cook to run `gh`), per-pro
 
 ## Test plan
 
-- Unit (`node --test`, no Pi): run-file fold over recorded Pi streams, `deriveTask` per state, `plan` (cap, interrupted launch, stop escalation, closed with worktree), close verdict, wake batching, board text, the LF-only reader with split UTF-8 input.
-- Git (real temp repos): ensure worktree twice, landed by base and by remote branch, dirty refusal.
-- Kitchen e2e (real cook Pi processes, fake model, temp `PI_CODING_AGENT_DIR` and `CHEF_HOME`): dispatch to two projects; a cook reports `needs_decision`; `send` relaunches and the cook commits and reports `done`; a message sent mid-run is steered; stop; close refuses then succeeds; a new `Kitchen` instance adopts a live cook and derives the outcome of a cook that exited while no owner ran; a second tick does nothing.
-- Chef e2e (a chef `pi --mode rpc --chef` on the fake model): tools are active only with `--chef`; a dispatch leads to one `chef-wake` that starts a turn.
+- Unit (`node --test`, no Pi): run-file fold over recorded Pi streams, `deriveTask` per state (including launch failures and the same-millisecond stop), `plan` (cap, interrupted launch and the reclaim threshold, stop escalation, the stuck settled cook, closed with worktree), close verdict, wake batching with the in-flight set, board text, result text truncation, the LF-only reader with split UTF-8 input, the cook poller gate against a fake extension API.
+- Git (real temp repos): ensure worktree twice, landed by base and by remote branch, dirty refusal, a stale remote-tracking ref never deletes the branch, a detached HEAD is off the branch.
+- Kitchen e2e (real cook Pi processes, fake model, temp `PI_CODING_AGENT_DIR` and `CHEF_HOME`): dispatch to two projects; a cook reports `needs_decision`; `send` relaunches and the cook commits and reports `done`; a message sent mid-run is steered; stop, and send right after a stop; close refuses then succeeds; a new `Kitchen` instance adopts a live cook and derives the outcome of a cook that exited while no owner ran; a second tick does nothing; a bad model and a broken worktree path are launch failures that a send retries; a broken task.json and config.json do not stop the tick; a cook that never exits is killed; a ghost cook blocks a second launch; a lost lease is found before any write; a read-only session promotes.
+- Chef e2e (a chef `pi --mode rpc --chef` on the fake model): tools are active only with `--chef`; a dispatch leads to one `chef-wake` that starts a turn; a wake queued behind a busy turn is marked notified only on delivery; a wake dropped with `clear_queue` is sent again after the turn settles.

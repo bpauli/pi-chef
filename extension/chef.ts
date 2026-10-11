@@ -6,10 +6,10 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type Static, type TSchema, Type } from "typebox";
+import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { ChefError, ChefModeEntrySchema, type Millis, type Notice, type NoticeRef, type Pid, type TaskId, type WakeDetails, WakeDetailsSchema, millis, parseTaskId, runNo } from "./domain.ts";
-import { type RestartNote, boardHeader, boardLines, formatAge, formatWake, outcomeText, plural, stateText, statusText } from "./derive.ts";
+import { type RestartNote, boardHeader, boardLines, formatAge, formatWake, outcomeText, plural, queuePosition, stateText, statusText } from "./derive.ts";
 import { piInvocation } from "./cooks.ts";
 import { Kitchen, type KitchenReader, type TaskResult, lostError } from "./kitchen.ts";
 import { Store, kitchenDir } from "./store.ts";
@@ -51,11 +51,6 @@ const CloseParams = Type.Object(
   { additionalProperties: false },
 );
 const NoParams = Type.Object({}, { additionalProperties: false });
-
-function checked<T extends TSchema>(schema: T, params: unknown): Static<T> {
-  if (!Value.Check(schema, params)) throw new ChefError(`Invalid parameters: ${Value.Errors(schema, params)[0]?.message ?? "schema mismatch"}.`);
-  return params;
-}
 
 // ---------- Wake path ----------
 
@@ -162,8 +157,9 @@ export function installChef(pi: ExtensionAPI): void {
     return on ? [...others, ...CHEF_TOOLS] : others;
   };
 
+  // The active branch only: an entry on an abandoned branch must not turn chef mode on.
   const chefModeOn = (ctx: ExtensionContext): boolean => {
-    const entries = ctx.sessionManager.getEntries().filter((e) => e.type === "custom" && e.customType === "chef-mode");
+    const entries = ctx.sessionManager.getBranch().filter((e) => e.type === "custom" && e.customType === "chef-mode");
     const last = entries.at(-1);
     return last?.type === "custom" && Value.Check(ChefModeEntrySchema, last.data) && last.data.on;
   };
@@ -175,8 +171,18 @@ export function installChef(pi: ExtensionAPI): void {
       current.restart = undefined;
     });
 
-  const open = async (ctx: ExtensionContext, takeover = false): Promise<ChefSession> => {
-    if (session && !takeover) return session;
+  // Two fast /chef calls share one open, so the kitchen is never opened twice.
+  let opening: Promise<ChefSession> | undefined;
+  const open = (ctx: ExtensionContext, takeover = false): Promise<ChefSession> => {
+    if (session && !takeover) return Promise.resolve(session);
+    if (opening) return opening;
+    opening = openNow(ctx, takeover).finally(() => {
+      opening = undefined;
+    });
+    return opening;
+  };
+
+  const openNow = async (ctx: ExtensionContext, takeover: boolean): Promise<ChefSession> => {
     if (session) close(ctx);
     const store = new Store(kitchenDir(process.env, agentDir()));
     const self = { pid: process.pid as Pid, sessionId: ctx.sessionManager.getSessionId() };
@@ -305,7 +311,7 @@ export function installChef(pi: ExtensionAPI): void {
     promptSnippet: "Register a git repository as a chef project",
     parameters: AddProjectParams,
     async execute(_id, params) {
-      const p = await owner().addProject(checked(AddProjectParams, params));
+      const p = await owner().addProject(params);
       return text(`Registered ${p.name}: ${p.path}, tasks fork from ${p.baseBranch}.`);
     },
   });
@@ -314,7 +320,7 @@ export function installChef(pi: ExtensionAPI): void {
     ...common,
     name: "chef_dispatch",
     label: "Dispatch",
-    description: "Create a task for a project and hand it to a cook, a Pi agent in its own git worktree and branch. Starts at once or queues behind the cook limit. Returns immediately.",
+    description: "Create a task for a project and hand it to a cook, a Pi agent in its own git worktree and branch. Starts at once or queues behind the cook limit.",
     promptSnippet: "Hand a task to a cook in its own worktree",
     promptGuidelines: [
       "Before the first chef_dispatch in a session, load the chef skill.",
@@ -324,13 +330,12 @@ export function installChef(pi: ExtensionAPI): void {
     parameters: DispatchParams,
     async execute(_id, params) {
       const k = owner();
-      const view = await k.dispatch(checked(DispatchParams, params));
+      const view = await k.dispatch(params);
       const board = await k.board();
       const cooks = `${board.cooks.busy}/${board.cooks.cap} cooks busy`;
       if (view.state.kind === "cooking") return text(`${view.spec.id} is cooking on branch ${view.spec.branch} (${cooks}). You will get a kitchen update when it needs you.`);
       if (view.state.kind === "idle") return text(`${view.spec.id} failed to launch: ${view.state.outcome.kind === "failed" ? view.state.outcome.reason : outcomeText(view.state.outcome)}. Fix the cause, then chef_send ${view.spec.id} to retry.`);
-      const queue = board.open.filter((v) => v.state.kind === "queued").sort((a, b) => a.spec.createdAt - b.spec.createdAt);
-      return text(`${view.spec.id} is queued, position ${queue.findIndex((v) => v.spec.id === view.spec.id) + 1} (${cooks}). It starts when a cook frees up.`);
+      return text(`${view.spec.id} is queued, position ${queuePosition(board, view.spec.id)} (${cooks}). It starts when a cook frees up.`);
     },
   });
 
@@ -354,7 +359,7 @@ export function installChef(pi: ExtensionAPI): void {
     promptSnippet: "Answer, steer, or resume a cook",
     parameters: SendParams,
     async execute(_id, params) {
-      const p = checked(SendParams, params);
+      const p = params;
       const id = task(p.task);
       const d = await owner().send(id, p.message);
       switch (d.kind) {
@@ -382,7 +387,7 @@ export function installChef(pi: ExtensionAPI): void {
     promptSnippet: "Stop a cook",
     parameters: TaskParams,
     async execute(_id, params) {
-      const id = task(checked(TaskParams, params).task);
+      const id = task(params.task);
       const { view, signalled } = await owner().stop(id);
       const { state } = view;
       if (state.kind === "idle" && state.outcome.kind === "stopped") {
@@ -402,7 +407,7 @@ export function installChef(pi: ExtensionAPI): void {
     promptSnippet: "Review a task's outcome",
     parameters: TaskParams,
     async execute(_id, params) {
-      const id = task(checked(TaskParams, params).task);
+      const id = task(params.task);
       return text(resultText(await reader().result(id), now()));
     },
   });
@@ -415,7 +420,7 @@ export function installChef(pi: ExtensionAPI): void {
     promptSnippet: "Close a landed task",
     parameters: CloseParams,
     async execute(_id, params) {
-      const p = checked(CloseParams, params);
+      const p = params;
       const id = task(p.task);
       const { view, removal } = await owner().close(id, p.discard === true);
       if ("error" in removal) return text(`${id} closed. Removing its worktree failed: ${removal.error} chef retries it on every tick.`);
@@ -457,28 +462,38 @@ async function boardText(reader: KitchenReader): Promise<string> {
   return [projects, "", ...lines, closed].filter((l, i, all) => l !== "" || i < all.length - 1).join("\n");
 }
 
+const RESULT_MAX = 4000;
+
+/** Keeps `text` within `max` characters, marking the cut. A budget too small for any content yields nothing. */
+function cut(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return max < 20 ? "" : `${text.slice(0, max - 6)} [cut]`;
+}
+
+/** Head, body, branch facts, diffstat, transcript. The body and the diffstat are cut first: the paths and the facts must survive. */
 export function resultText(r: TaskResult, at: Millis): string {
-  const { view } = r;
-  const { spec, state } = view;
-  const lines: string[] = [];
+  const { spec, state } = r.view;
   const age = state.kind === "idle" || state.kind === "cooking" ? ` ${formatAge(state.since, at)}` : "";
   const run = state.kind === "idle" && state.run !== undefined ? `, run ${state.run}` : state.kind === "cooking" ? `, run ${state.run}` : "";
-  lines.push(`${spec.id} "${spec.title}": ${state.kind === "idle" ? `idle${age}, ${outcomeText(state.outcome)}` : stateText(state) + age}${run}.`);
+  const head = `${spec.id} "${spec.title}": ${state.kind === "idle" ? `idle${age}, ${outcomeText(state.outcome)}` : stateText(state) + age}${run}.`;
+  let body = "";
   if (state.kind === "idle") {
     const o = state.outcome;
-    const body = o.kind === "done" ? o.summary : o.kind === "needs_decision" ? o.question : o.kind === "stopped" ? "" : o.reason;
-    if (body) lines.push(`${o.kind === "needs_decision" ? "Question" : o.kind === "done" ? "Summary" : "Reason"}: ${body.trim().slice(0, 2000)}`);
+    const raw = o.kind === "done" ? o.summary : o.kind === "needs_decision" ? o.question : o.kind === "stopped" ? "" : o.reason;
+    if (raw) body = `${o.kind === "needs_decision" ? "Question" : o.kind === "done" ? "Summary" : "Reason"}: ${raw.trim()}`;
   }
+  let where: string;
   if (r.git) {
     const landed = r.git.unlanded === 0 ? (r.git.ahead ? "all on a remote-tracking ref as of the last fetch" : "nothing to land") : `${r.git.unlanded} not landed`;
     const clean = r.git.dirtyFiles ? `${plural(r.git.dirtyFiles, "changed file")}` : "clean";
-    const head = r.git.onBranch ? "" : ` HEAD is not on ${spec.branch}: commits made there are not on the task branch.`;
-    lines.push(`Branch ${spec.branch} in ${spec.worktree}: ${plural(r.git.ahead, "commit")} ahead of ${spec.baseBranch}, ${landed}, ${clean}.${head}`);
-    if (r.diffstat) lines.push(r.diffstat);
+    const off = r.git.onBranch ? "" : ` HEAD is not on ${spec.branch}: commits made there are not on the task branch.`;
+    where = `Branch ${spec.branch} in ${spec.worktree}: ${plural(r.git.ahead, "commit")} ahead of ${spec.baseBranch}, ${landed}, ${clean}.${off}`;
   } else {
-    lines.push(`Worktree ${spec.worktree} is gone. Branch ${spec.branch} may still exist in ${r.project?.path ?? "the repository"}.`);
+    where = `Worktree ${spec.worktree} is gone. Branch ${spec.branch} may still exist in ${r.project?.path ?? "the repository"}.`;
   }
-  if (r.transcript) lines.push(`Transcript: ${r.transcript}`);
-  const text = lines.join("\n");
-  return text.length > 4000 ? `${text.slice(0, 3990)}\n[cut]` : text;
+  const transcript = r.transcript ? `Transcript: ${r.transcript}` : "";
+  const fixed = head.length + where.length + transcript.length + 4;
+  const bodyText = cut(body, Math.max(200, Math.min(2000, RESULT_MAX - fixed - 400)));
+  const diffText = cut(r.git ? r.diffstat : "", Math.max(0, RESULT_MAX - fixed - bodyText.length - 1));
+  return [head, bodyText, where, diffText, transcript].filter(Boolean).join("\n");
 }

@@ -91,7 +91,7 @@ test("a recorded run that ends with chef_report done yields the report, the star
   assert.equal(facts.settled, true);
   const firstMessage = lines.map((l) => (l ? (JSON.parse(l) as { type: string; message?: { timestamp?: number } }) : undefined)).find((e) => e?.type === "message_end" && e.message?.timestamp !== undefined);
   assert.equal(facts.startedAt, firstMessage?.message?.timestamp);
-  assert.equal(facts.turns, 2);
+  assert.equal(facts.prompted, true);
 });
 
 test("a run's start time is its first timestamped message, not the session header that a relaunch repeats", () => {
@@ -467,6 +467,6 @@ test("boardLines fits every line to the width, counts who needs you, and is empt
 
 test("a read-only board names the owner pid in its header", () => {
   const view = deriveTask(record(), none, NOW);
-  const board = { role: "read-only" as const, holder: { pid: 77 as Pid, sessionId: "s", since: millis(0) }, projects: [], open: [view], broken: [], closedCount: 0, cooks: { busy: 0, cap: 3 } };
+  const board = { role: "read-only" as const, holder: { pid: 77 as Pid, sessionId: "s" }, projects: [], open: [view], broken: [], closedCount: 0, cooks: { busy: 0, cap: 3 } };
   assert.equal(boardLines(board, NOW, 80)[0], "chef (read-only, pid 77 owns the kitchen)");
 });

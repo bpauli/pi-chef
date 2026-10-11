@@ -113,7 +113,7 @@ test("a dispatch leads to exactly one chef-wake that starts a turn, and chef_res
 
   const wakes = chef.events.filter((e) => e.type === "message_start" && e.message?.role === "custom" && e.message.customType === "chef-wake");
   assert.equal(wakes.length, 1);
-  assert.equal(wakes[0]!.message!.content, 'Kitchen update (1):\n- api-1 "Add a" is done: added a.txt Review with chef_result api-1.');
+  assert.equal(wakes[0]!.message!.content, 'Kitchen update (1):\n- api-1 "Add a" is done: added a.txt. Review with chef_result api-1.');
   const wakeAt = chef.events.indexOf(wakes[0]!);
   const firstSettle = chef.events.findIndex((e) => e.type === "agent_settled");
   assert.ok(firstSettle < wakeAt, "the wake arrived after the dispatch turn settled");

@@ -30,7 +30,6 @@ export interface RunFacts {
   settled: boolean;
   /** The run's prompt reached the session as a user message, so the session holds the brief. */
   prompted: boolean;
-  turns: number;
   activity: Activity;
   report: CookReport | undefined;
   finalText: string | undefined;
@@ -42,7 +41,6 @@ export const EMPTY_RUN: RunFacts = {
   lastAt: undefined,
   settled: false,
   prompted: false,
-  turns: 0,
   activity: { kind: "starting" },
   report: undefined,
   finalText: undefined,
@@ -83,14 +81,15 @@ export function foldRunLine(facts: RunFacts, line: string): RunFacts {
   // The session header repeats the session's creation time on every relaunch, so
   // the run starts at its first timestamped message.
   if (facts.startedAt === undefined && Value.Check(TimedMessageLine, parsed)) facts = { ...facts, startedAt: millis(parsed.message.timestamp) };
-  if (Value.Check(TurnStartLine, parsed)) return { ...facts, turns: facts.turns + 1, activity: { kind: "thinking" } };
+  if (Value.Check(TurnStartLine, parsed)) return { ...facts, activity: { kind: "thinking" } };
   if (Value.Check(ToolStartLine, parsed)) {
     return { ...facts, activity: { kind: "tool", tool: parsed.toolName, detail: activityDetail(parsed.toolName, parsed.args) } };
   }
   if (Value.Check(ToolEndLine, parsed)) {
     const content = parsed.result.structuredContent;
     const isReport = parsed.toolName === "chef_report" && !parsed.isError && Value.Check(CookReportSchema, content);
-    return { ...facts, activity: { kind: "thinking" }, report: isReport ? content : facts.report };
+    // A report and a provider error are two verdicts on the run: the later one in the stream wins.
+    return isReport ? { ...facts, activity: { kind: "thinking" }, report: content, providerError: undefined } : { ...facts, activity: { kind: "thinking" } };
   }
   if (Value.Check(AssistantEndLine, parsed)) {
     const { message } = parsed;
@@ -101,6 +100,7 @@ export function foldRunLine(facts: RunFacts, line: string): RunFacts {
       lastAt: message.timestamp === undefined ? facts.lastAt : millis(message.timestamp),
       finalText: text || facts.finalText,
       providerError: failed ? (message.errorMessage ?? "provider error") : undefined,
+      report: failed ? undefined : facts.report,
     };
   }
   if (Value.Check(UserEndLine, parsed)) return { ...facts, prompted: true };
@@ -148,7 +148,7 @@ export interface TaskRecord {
   worktreeExists: boolean;
 }
 
-/** Live cook processes, keyed by the `--session-id` in their argv. */
+/** Live cook processes, keyed by the `CHEF_SESSION_ID` in their environment. */
 export type LiveCooks = ReadonlyMap<string, Pid>;
 
 /** The last launch attempt produced no output. Its run number is used up. */
@@ -236,7 +236,7 @@ export function nextRunOf(rec: TaskRecord): RunNo {
  * launch guard in `plan` still waits for the exit.
  */
 export function deriveTask(rec: TaskRecord, live: LiveCooks, now: Millis): TaskView {
-  const view = (state: TaskState): TaskView => ({ spec: rec.spec, state, runs: rec.runs.length, pendingMessages: rec.pendingAt.length });
+  const view = (state: TaskState): TaskView => ({ spec: rec.spec, state });
   const { last, lastStop, closed, launchFailure, resumable, held } = fold(rec);
   if (closed) return view({ kind: "closed", at: millis(closed.at), discarded: closed.discarded });
   const pid = live.get(rec.spec.sessionId);
@@ -412,19 +412,31 @@ export interface RestartNote {
 
 const SUMMARY_MAX = 400;
 
+/** One line, capped, ending in a sentence mark so the next sentence does not run into it. */
+const sentence = (text: string): string => {
+  const flat = oneLine(text, SUMMARY_MAX);
+  return /[.!?…]$/.test(flat) ? flat : `${flat}.`;
+};
+
 export function noticeLine(n: Notice): string {
   const head = `${n.task} "${n.title}"`;
   const o = n.outcome;
   switch (o.kind) {
     case "done":
-      return `${head} is done${o.reported ? "" : " (no chef_report, final text follows)"}: ${oneLine(o.summary, SUMMARY_MAX)} Review with chef_result ${n.task}.`;
+      return `${head} is done${o.reported ? "" : " (no chef_report, final text follows)"}: ${sentence(o.summary)} Review with chef_result ${n.task}.`;
     case "needs_decision":
-      return `${head} needs a decision: ${oneLine(o.question, SUMMARY_MAX)} Answer with chef_send ${n.task}.`;
+      return `${head} needs a decision: ${sentence(o.question)} Answer with chef_send ${n.task}.`;
     case "blocked":
-      return `${head} is blocked: ${oneLine(o.reason, SUMMARY_MAX)} Remove the obstacle and chef_send ${n.task}, or chef_stop it.`;
+      return `${head} is blocked: ${sentence(o.reason)} Remove the obstacle and chef_send ${n.task}, or chef_stop it.`;
     case "failed":
-      return `${head} failed: ${oneLine(o.reason, SUMMARY_MAX)} chef_send ${n.task} to retry, or tell the human.`;
+      return `${head} failed: ${sentence(o.reason)} chef_send ${n.task} to retry, or tell the human.`;
   }
+}
+
+/** 1-based place of a queued task among the queued tasks, oldest first. 0 when it is not queued. */
+export function queuePosition(board: Board, task: TaskId): number {
+  const queue = board.open.filter((v) => v.state.kind === "queued").sort((a, b) => a.spec.createdAt - b.spec.createdAt);
+  return queue.findIndex((v) => v.spec.id === task) + 1;
 }
 
 export function formatWake(notices: readonly Notice[], restart?: RestartNote): string {

@@ -23,7 +23,7 @@ import {
   parseModel,
   parseProjectName,
 } from "./domain.ts";
-import { type Action, type GitFacts, type LiveCooks, type PlanInput, type TaskRecord, closeVerdict, deriveTask, nextRunOf, plan, stateText } from "./derive.ts";
+import { type Action, type GitFacts, type LiveCooks, type PlanInput, type TaskRecord, closeVerdict, deriveTask, nextRunOf, plan, queuePosition, stateText } from "./derive.ts";
 import { type CookEnd, CookTable, type PiInvocation, firstPrompt, followUpPrompt, launchCook, messagesSection, pidStart, signalCook } from "./cooks.ts";
 import { type RemoveResult, diffstat, ensureWorktree, gitFacts, inspectRepo, removeWorktree, verifyBaseBranch } from "./git.ts";
 import { RunTails, type Snapshot, type Store } from "./store.ts";
@@ -304,10 +304,7 @@ export class Kitchen extends KitchenReader {
         }
         if (state?.kind === "idle" && state.outcome.kind === "failed") return { kind: "launch-failed", reason: state.outcome.reason };
         if (state?.kind !== "queued") throw new ChefError(`${task} did not take the message: it is ${state ? stateText(state) : "gone"}.`);
-        if (!(await this.cooks.live()).has(rec.spec.sessionId)) {
-          const queue = report.board.open.filter((v) => v.state.kind === "queued").sort((a, b) => a.spec.createdAt - b.spec.createdAt);
-          return { kind: "queued", position: queue.findIndex((v) => v.spec.id === task) + 1 };
-        }
+        if (!(await this.cooks.live()).has(rec.spec.sessionId)) return { kind: "queued", position: queuePosition(report.board, task) };
         if (this.now() >= deadline) return { kind: "exiting" };
         await sleep(EXIT_POLL_MS);
       }
@@ -499,7 +496,7 @@ export function lostError(holder: Holder | undefined): ChefError {
 // ---------- Lease ----------
 
 function holderOf(lease: ReturnType<Store["readLease"]>): Holder | undefined {
-  return lease ? { pid: lease.pid as Pid, sessionId: lease.sessionId, since: millis(lease.since) } : undefined;
+  return lease ? { pid: lease.pid as Pid, sessionId: lease.sessionId } : undefined;
 }
 
 /**

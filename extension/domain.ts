@@ -59,12 +59,6 @@ export function parseTaskId(raw: string, known: readonly TaskId[]): TaskId {
   throw new ChefError(`Unknown task "${raw}". Known tasks: ${list}.`);
 }
 
-export function taskSeq(id: TaskId): { project: ProjectName; seq: number } {
-  const m = TASK_ID.exec(id);
-  if (!m) throw new ChefError(`"${id}" is not a task id like api-7.`);
-  return { project: m[1] as ProjectName, seq: Number(m[2]) };
-}
-
 // ---------- Persisted: written by the owner ----------
 
 /** kitchen/projects/<name>.json. Written once by chef_add_project. */
@@ -198,8 +192,6 @@ export type TaskState =
 export interface TaskView {
   spec: TaskSpec;
   state: TaskState;
-  runs: number;
-  pendingMessages: number;
 }
 
 /** One line of a kitchen update. A stopped run never wakes the chef. */
@@ -213,7 +205,6 @@ export interface Notice {
 export interface Holder {
   pid: Pid;
   sessionId: string;
-  since: Millis;
 }
 
 /** A task directory whose files do not parse. Shown, never derived. */

@@ -23,7 +23,7 @@ The chef reviews the diff, asks you the one real question, answers the cook, and
 pi install git:github.com/bpauli/chef
 ```
 
-Requirements: Pi 1.0.3 or later, Node 22.19 or later, git. Linux and macOS. Cooks run as detached processes and survive a chef restart.
+Requirements: Pi 1.0.3 or later, Node 22.19 or later, git. Linux and macOS. Cooks run as detached processes and survive a chef restart. On Linux chef finds its cooks through `/proc`; the macOS path (`ps -E`) is written but not covered by the tests.
 
 ## Usage
 
@@ -72,7 +72,7 @@ The kitchen is plain files. `tasks/<id>/task.json` is the task, `runs/<n>.jsonl`
 - One process model. Cooks are detached child processes. The chef finds them by a marker in their environment and reads their Pi JSONL stream. There is no watcher process; the chef session runs a one-second tick.
 - Derived state. firstmate keeps status logs, meta files, busy records, and a wake queue. chef stores no task state. Every state is derived from the task's files and the live processes, so a restart is the first tick, not a recovery routine.
 - One writer per file. The cook never writes a chef file. Its report is a tool call in its own transcript.
-- Small. About 2.4k lines of TypeScript plus tests, against firstmate's 122k lines of bash and a 6.9k-word supervisor contract.
+- Small. About 2.8k lines of TypeScript plus tests, against firstmate's 122k lines of bash and a 6.9k-word supervisor contract.
 - Less. No backlog, no project modes, no merge automation, no scouts, no remote workers. A brief can tell a cook to run `gh`. Everything else is the chef's judgment, written in one short skill.
 
 ## Development
