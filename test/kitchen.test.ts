@@ -89,7 +89,7 @@ test("dispatch to two projects: each cook commits and reports done, one notice p
 
   const result = await kitchen.result(a.spec.id);
   assert.equal(result.view.state.kind, "idle");
-  assert.deepEqual(result.git, { dirtyFiles: 0, ahead: 1, unlanded: 1 });
+  assert.deepEqual(result.git, { dirtyFiles: 0, ahead: 1, unlanded: 1, onBranch: true });
   assert.match(result.diffstat, /a\.txt/);
   assert.equal(result.transcript, store.runFile(a.spec.id, runNo(1)));
   assert.equal(git(repos.api, "rev-list", "--count", "main..chef/api-1"), "1");
@@ -217,12 +217,13 @@ test("close refuses unlanded work, then succeeds after a merge and removes the w
   git(repos.api, "merge", "-q", "--ff-only", "chef/api-1");
   const closed = await kitchen.close(view.spec.id, false);
   assert.equal(closed.view.state.kind, "closed");
-  assert.equal(closed.branchKept, false);
+  assert.deepEqual(closed.removal, { worktree: "removed", branch: "deleted" });
   assert.equal(existsSync(view.spec.worktree), false);
   assert.equal(git(repos.api, "branch", "--list", "chef/api-1"), "");
   assert.deepEqual(store.readEvents(view.spec.id).map((e) => e.type), ["notified", "closed"]);
   const again = await kitchen.close(view.spec.id, false);
   assert.equal(again.view.state.kind, "closed");
+  assert.deepEqual(again.removal, { worktree: "missing", branch: "missing" });
   const board = await kitchen.tick();
   assert.equal(board.kind === "ok" && board.board.open.length, 0);
   assert.equal(board.kind === "ok" && board.board.closedCount, 1);

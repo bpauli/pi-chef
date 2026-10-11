@@ -352,11 +352,12 @@ test("plan emits one notify per idle task with an unnotified final outcome", () 
 
 test("close refuses dirty or unlanded work unless discard, and names the counts", () => {
   const idle = deriveTask(record({ runs: [run(1, settledDone())] }), none, NOW).state;
-  const refused = closeVerdict(id("api-1"), idle, { dirtyFiles: 2, ahead: 3, unlanded: 3 }, false);
+  const refused = closeVerdict(id("api-1"), idle, { dirtyFiles: 2, ahead: 3, unlanded: 3, onBranch: true }, false);
   assert.equal(refused.ok, false);
   assert.equal(!refused.ok && refused.reason, "api-1 has 3 commits not on the base branch or any remote branch and 2 changed files in the worktree. Merge or push the work, or pass discard: true if the human said to drop it.");
-  assert.deepEqual(closeVerdict(id("api-1"), idle, { dirtyFiles: 2, ahead: 3, unlanded: 3 }, true), { ok: true });
-  assert.deepEqual(closeVerdict(id("api-1"), idle, { dirtyFiles: 0, ahead: 3, unlanded: 0 }, false), { ok: true });
+  assert.deepEqual(closeVerdict(id("api-1"), idle, { dirtyFiles: 2, ahead: 3, unlanded: 3, onBranch: true }, true), { ok: true });
+  assert.deepEqual(closeVerdict(id("api-1"), idle, { dirtyFiles: 0, ahead: 3, unlanded: 0, onBranch: true }, false), { ok: true });
+  assert.match((closeVerdict(id("api-1"), idle, { dirtyFiles: 0, ahead: 0, unlanded: 0, onBranch: false }, false) as { reason: string }).reason, /HEAD is not on chef\/api-1/);
   assert.deepEqual(closeVerdict(id("api-1"), idle, undefined, false), { ok: true });
 });
 

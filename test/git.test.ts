@@ -86,12 +86,12 @@ test("gitFacts: a commit merged into base is landed, an unmerged one is ahead an
   await withRepo(async (dir, repo) => {
     const wt = join(dir, "wt", "api-1");
     await ensureWorktree(repo, wt, "chef/api-1", "main");
-    assert.deepEqual(await gitFacts(repo, wt, "chef/api-1", "main"), { dirtyFiles: 0, ahead: 0, unlanded: 0 });
+    assert.deepEqual(await gitFacts(repo, wt, "chef/api-1", "main"), { dirtyFiles: 0, ahead: 0, unlanded: 0, onBranch: true });
     commitIn(wt, "a.txt");
-    assert.deepEqual(await gitFacts(repo, wt, "chef/api-1", "main"), { dirtyFiles: 0, ahead: 1, unlanded: 1 });
+    assert.deepEqual(await gitFacts(repo, wt, "chef/api-1", "main"), { dirtyFiles: 0, ahead: 1, unlanded: 1, onBranch: true });
     assert.match(await diffstat(repo, "chef/api-1", "main"), /a\.txt \| 1 \+/);
     sh(repo, "merge", "-q", "--ff-only", "chef/api-1");
-    assert.deepEqual(await gitFacts(repo, wt, "chef/api-1", "main"), { dirtyFiles: 0, ahead: 0, unlanded: 0 });
+    assert.deepEqual(await gitFacts(repo, wt, "chef/api-1", "main"), { dirtyFiles: 0, ahead: 0, unlanded: 0, onBranch: true });
     assert.equal(await gitFacts(repo, join(dir, "gone"), "chef/api-1", "main"), undefined);
   });
 });
@@ -105,9 +105,9 @@ test("gitFacts: a commit pushed to a remote branch is landed, an unpushed one is
     await ensureWorktree(repo, wt, "chef/api-1", "main");
     commitIn(wt, "a.txt");
     sh(wt, "push", "-q", "origin", "chef/api-1");
-    assert.deepEqual(await gitFacts(repo, wt, "chef/api-1", "main"), { dirtyFiles: 0, ahead: 1, unlanded: 0 });
+    assert.deepEqual(await gitFacts(repo, wt, "chef/api-1", "main"), { dirtyFiles: 0, ahead: 1, unlanded: 0, onBranch: true });
     commitIn(wt, "b.txt");
-    assert.deepEqual(await gitFacts(repo, wt, "chef/api-1", "main"), { dirtyFiles: 0, ahead: 2, unlanded: 1 });
+    assert.deepEqual(await gitFacts(repo, wt, "chef/api-1", "main"), { dirtyFiles: 0, ahead: 2, unlanded: 1, onBranch: true });
   });
 });
 
@@ -127,21 +127,53 @@ test("gitFacts: ignored files do not make the worktree dirty, tracked changes do
   });
 });
 
-test("removeWorktree twice is success, keeps an unmerged branch without discard, and deletes it with discard", async () => {
+test("removeWorktree twice is success, keeps an unmerged branch without discard, deletes a merged one, and deletes with discard", async () => {
   await withRepo(async (dir, repo) => {
     const wt = join(dir, "wt", "api-1");
     await ensureWorktree(repo, wt, "chef/api-1", "main");
     commitIn(wt, "a.txt");
-    await removeWorktree(repo, wt, "chef/api-1", false);
+    assert.deepEqual(await removeWorktree(repo, wt, "chef/api-1", "main", false), { worktree: "removed", branch: "kept" });
     assert.equal(existsSync(wt), false);
     assert.equal(sh(repo, "branch", "--list", "chef/api-1"), "chef/api-1");
-    await removeWorktree(repo, wt, "chef/api-1", false);
-    await removeWorktree(repo, wt, "chef/api-1", true);
-    assert.equal(sh(repo, "branch", "--list", "chef/api-1"), "");
+    assert.deepEqual(await removeWorktree(repo, wt, "chef/api-1", "main", false), { worktree: "missing", branch: "kept" });
+    sh(repo, "merge", "-q", "--ff-only", "chef/api-1");
+    assert.deepEqual(await removeWorktree(repo, wt, "chef/api-1", "main", false), { worktree: "missing", branch: "deleted" });
+    assert.deepEqual(await removeWorktree(repo, wt, "chef/api-1", "main", false), { worktree: "missing", branch: "missing" });
     await ensureWorktree(repo, wt, "chef/api-2", "main");
+    commitIn(wt, "b.txt");
     writeFileSync(join(wt, "dirty.txt"), "x");
-    await assert.rejects(removeWorktree(repo, wt, "chef/api-2", false), ChefError);
-    await removeWorktree(repo, wt, "chef/api-2", true);
+    await assert.rejects(removeWorktree(repo, wt, "chef/api-2", "main", false), ChefError);
+    assert.deepEqual(await removeWorktree(repo, wt, "chef/api-2", "main", true), { worktree: "removed", branch: "deleted" });
     assert.equal(existsSync(wt), false);
+    assert.equal(sh(repo, "branch", "--list", "chef/api-2"), "");
+  });
+});
+
+test("removeWorktree keeps a branch whose commits are only on a stale remote-tracking ref, even when that upstream is set", async () => {
+  await withRepo(async (dir, repo) => {
+    const remote = join(dir, "remote.git");
+    sh(dir, "init", "-q", "--bare", remote);
+    sh(repo, "remote", "add", "origin", remote);
+    const wt = join(dir, "wt", "api-1");
+    await ensureWorktree(repo, wt, "chef/api-1", "main");
+    commitIn(wt, "a.txt");
+    sh(wt, "push", "-q", "-u", "origin", "chef/api-1");
+    sh(remote, "branch", "-D", "chef/api-1");
+    const sha = sh(wt, "rev-parse", "HEAD");
+    const result = await removeWorktree(repo, wt, "chef/api-1", "main", false);
+    assert.equal(sh(repo, "branch", "--list", "chef/api-1"), "chef/api-1", "the only copy of the commit is still reachable");
+    assert.equal(sh(repo, "rev-parse", "chef/api-1"), sha);
+    assert.deepEqual(result, { worktree: "removed", branch: "kept" });
+  });
+});
+
+test("gitFacts reports whether the worktree HEAD is on the task branch, so detached work is not taken for clean", async () => {
+  await withRepo(async (dir, repo) => {
+    const wt = join(dir, "wt", "api-1");
+    await ensureWorktree(repo, wt, "chef/api-1", "main");
+    assert.deepEqual(await gitFacts(repo, wt, "chef/api-1", "main"), { dirtyFiles: 0, ahead: 0, unlanded: 0, onBranch: true });
+    sh(wt, "checkout", "-q", "--detach");
+    commitIn(wt, "a.txt");
+    assert.deepEqual(await gitFacts(repo, wt, "chef/api-1", "main"), { dirtyFiles: 0, ahead: 0, unlanded: 0, onBranch: false });
   });
 });
