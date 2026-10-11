@@ -166,7 +166,7 @@ export function installChef(pi: ExtensionAPI): void {
       current.waker = new Waker((notices) => {
         pi.sendMessage({ customType: "chef-wake", content: formatWake(notices, current.restart), display: true, details: { notices } }, { triggerTurn: true, deliverAs: "followUp" });
         current.restart = undefined;
-        owner.markNotified(notices);
+        void owner.markNotified(notices).catch(() => undefined);
       });
     }
     session = current;

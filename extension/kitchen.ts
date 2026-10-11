@@ -185,36 +185,61 @@ export class KitchenReader {
 export class Kitchen extends KitchenReader {
   private chain: Promise<unknown> = Promise.resolve();
 
+  /**
+   * Every write runs here, one at a time with the tick, in the order lease check,
+   * read, decide, write, tick. A lost lease is found before the first write, and
+   * no interval tick can change a task between the decision and the write.
+   */
+  private mutate<T>(op: () => Promise<T>): Promise<T> {
+    const next = this.chain.then(() => {
+      if (!leaseIsMine(this.store, this.deps.self)) throw lostError(holderOf(this.store.readLease()));
+      return op();
+    });
+    this.chain = next.catch(() => undefined);
+    return next;
+  }
+
+  /** Verify lease, load records, liveness, plan, execute. Serialized: a tick never overlaps a mutation. */
+  tick(): Promise<TickReport> {
+    const next = this.chain.then(() => this.runTick());
+    this.chain = next.catch(() => undefined);
+    return next;
+  }
+
   // ---------- operations ----------
 
-  async addProject(input: { path: string; name?: string; note?: string; baseBranch?: string }): Promise<Project> {
-    const { root, baseBranch } = await inspectRepo(input.path.replace(/^~(?=$|\/)/, process.env.HOME ?? "~"));
-    const name = parseProjectName(input.name ?? basename(root));
-    return this.store.addProject({ name, path: root, baseBranch: input.baseBranch ?? baseBranch, note: input.note, addedAt: this.now() });
+  addProject(input: { path: string; name?: string; note?: string; baseBranch?: string }): Promise<Project> {
+    return this.mutate(async () => {
+      const { root, baseBranch } = await inspectRepo(input.path.replace(/^~(?=$|\/)/, process.env.HOME ?? "~"));
+      const name = parseProjectName(input.name ?? basename(root));
+      return this.store.addProject({ name, path: root, baseBranch: input.baseBranch ?? baseBranch, note: input.note, addedAt: this.now() });
+    });
   }
 
   /** Writes task.json, then the tick launches it or leaves it queued. */
-  async dispatch(input: DispatchInput): Promise<TaskView> {
-    const project = this.requireProject(input.project);
-    let id: TaskId | undefined;
-    for (let attempt = 0; attempt < 5 && !id; attempt++) {
-      const candidate = this.store.nextTaskId(project.name);
-      const created = this.store.createTask({
-        id: candidate,
-        project: project.name,
-        title: input.title,
-        brief: input.brief,
-        branch: `chef/${candidate}`,
-        worktree: this.store.worktreeDir(candidate),
-        baseBranch: project.baseBranch,
-        sessionId: randomUUID() as SessionId,
-        model: input.model,
-        createdAt: this.now(),
-      });
-      if (created) id = candidate;
-    }
-    if (!id) throw new ChefError(`Could not allocate a task id for ${project.name}.`);
-    return this.viewAfterTick(id);
+  dispatch(input: DispatchInput): Promise<TaskView> {
+    return this.mutate(async () => {
+      const project = this.requireProject(input.project);
+      let id: TaskId | undefined;
+      for (let attempt = 0; attempt < 5 && !id; attempt++) {
+        const candidate = this.store.nextTaskId(project.name);
+        const created = this.store.createTask({
+          id: candidate,
+          project: project.name,
+          title: input.title,
+          brief: input.brief,
+          branch: `chef/${candidate}`,
+          worktree: this.store.worktreeDir(candidate),
+          baseBranch: project.baseBranch,
+          sessionId: randomUUID() as SessionId,
+          model: input.model,
+          createdAt: this.now(),
+        });
+        if (created) id = candidate;
+      }
+      if (!id) throw new ChefError(`Could not allocate a task id for ${project.name}.`);
+      return this.viewAfterTick(id);
+    });
   }
 
   /**
@@ -223,59 +248,75 @@ export class Kitchen extends KitchenReader {
    * the exit), so send ticks until the exit or `exitWaitMs`, and never reads that
    * wait as the cap holding the task.
    */
-  async send(task: TaskId, text: string): Promise<Delivery> {
-    const rec = this.store.loadRecord(task, this.tails);
-    if (rec.events.some((e) => e.type === "closed")) throw new ChefError(`${task} is closed. Dispatch a new task.`);
-    const before = deriveTask(rec, await this.liveCooks([rec]), this.now()).state;
-    this.store.postMessage(task, text, this.now());
-    const deadline = this.now() + (this.deps.exitWaitMs ?? 5000);
-    for (;;) {
-      const report = await this.tick();
-      if (report.kind === "lost") throw lostError(report.holder);
-      const state = report.board.open.find((v) => v.spec.id === task)?.state;
-      if (state?.kind === "cooking") {
-        return before.kind === "cooking" && before.run === state.run ? { kind: "steer" } : { kind: "relaunched", run: state.run };
+  send(task: TaskId, text: string): Promise<Delivery> {
+    return this.mutate(async () => {
+      const rec = this.store.loadRecord(task, this.tails);
+      if (rec.events.some((e) => e.type === "closed")) throw new ChefError(`${task} is closed. Dispatch a new task.`);
+      const before = deriveTask(rec, await this.liveCooks([rec]), this.now()).state;
+      this.store.postMessage(task, text, this.now());
+      const deadline = this.now() + (this.deps.exitWaitMs ?? 5000);
+      for (;;) {
+        const report = await this.runTick();
+        if (report.kind === "lost") throw lostError(report.holder);
+        const state = report.board.open.find((v) => v.spec.id === task)?.state;
+        if (state?.kind === "cooking") {
+          return before.kind === "cooking" && before.run === state.run ? { kind: "steer" } : { kind: "relaunched", run: state.run };
+        }
+        if (state?.kind !== "queued") return { kind: "held" };
+        if (!(await this.cooks.live()).has(rec.spec.sessionId)) {
+          const queue = report.board.open.filter((v) => v.state.kind === "queued").sort((a, b) => a.spec.createdAt - b.spec.createdAt);
+          return { kind: "queued", position: queue.findIndex((v) => v.spec.id === task) + 1 };
+        }
+        if (this.now() >= deadline) return { kind: "exiting" };
+        await sleep(EXIT_POLL_MS);
       }
-      if (state?.kind !== "queued") return { kind: "held" };
-      if (!(await this.cooks.live()).has(rec.spec.sessionId)) {
-        const queue = report.board.open.filter((v) => v.state.kind === "queued").sort((a, b) => a.spec.createdAt - b.spec.createdAt);
-        return { kind: "queued", position: queue.findIndex((v) => v.spec.id === task) + 1 };
-      }
-      if (this.now() >= deadline) return { kind: "exiting" };
-      await sleep(EXIT_POLL_MS);
-    }
+    });
   }
 
   /** Stops the live run, or holds a queued task. The tick escalates to SIGKILL. */
-  async stop(task: TaskId): Promise<TaskView> {
-    const rec = this.store.loadRecord(task, this.tails);
-    const live = await this.liveCooks([rec]);
-    const view = plan({ records: [rec], live, now: this.now(), cap: 1, killGraceMs: 0 }).views[0]!;
-    const run = view.state.kind === "cooking" ? view.state.run : view.state.kind === "queued" ? nextRunOf(rec) : undefined;
+  stop(task: TaskId): Promise<TaskView> {
+    return this.mutate(async () => {
+      const rec = this.store.loadRecord(task, this.tails);
+      await this.stopNow(rec, await this.liveCooks([rec]));
+      return this.viewAfterTick(task);
+    });
+  }
+
+  private async stopNow(rec: TaskRecord, live: LiveCooks): Promise<void> {
+    const task = rec.spec.id;
+    const { state } = deriveTask(rec, live, this.now());
+    const run = state.kind === "cooking" ? state.run : state.kind === "queued" ? nextRunOf(rec) : undefined;
     if (run !== undefined) this.store.appendEvent(task, { type: "stop", at: this.now(), run });
     const pid = live.get(rec.spec.sessionId);
-    if (view.state.kind === "cooking" && pid !== undefined) await signalCook(pid, rec.spec.sessionId, "SIGTERM");
-    return this.viewAfterTick(task);
+    if (state.kind === "cooking" && pid !== undefined) await signalCook(pid, rec.spec.sessionId, "SIGTERM");
   }
 
   /**
    * Refuses unless closeVerdict says ok. Order makes it crash-safe: stop a live
    * cook when discarding, append `closed`, then the tick removes the worktree.
    */
-  async close(task: TaskId, discard: boolean): Promise<{ view: TaskView; branchKept: boolean }> {
-    const result = await this.result(task);
-    const verdict = closeVerdict(task, result.view.state, result.git, discard);
-    if (!verdict.ok) throw new ChefError(verdict.reason);
-    if (result.view.state.kind === "closed") return { view: result.view, branchKept: false };
-    if (result.view.state.kind === "cooking") await this.stop(task);
-    this.store.appendEvent(task, { type: "closed", at: this.now(), discarded: discard });
-    const view = await this.viewAfterTick(task);
-    return { view, branchKept: !discard && (result.git?.ahead ?? 0) > 0 };
+  close(task: TaskId, discard: boolean): Promise<{ view: TaskView; branchKept: boolean }> {
+    return this.mutate(async () => {
+      const rec = this.store.loadRecord(task, this.tails);
+      const live = await this.liveCooks([rec]);
+      const before = deriveTask(rec, live, this.now());
+      const project = this.store.readProject(rec.spec.project);
+      const git = project ? await gitFacts(project.path, rec.spec.worktree, rec.spec.branch, rec.spec.baseBranch) : undefined;
+      const verdict = closeVerdict(task, before.state, git, discard);
+      if (!verdict.ok) throw new ChefError(verdict.reason);
+      if (before.state.kind === "closed") return { view: before, branchKept: false };
+      if (before.state.kind === "cooking") await this.stopNow(rec, live);
+      this.store.appendEvent(task, { type: "closed", at: this.now(), discarded: discard });
+      const view = await this.viewAfterTick(task);
+      return { view, branchKept: !discard && (git?.ahead ?? 0) > 0 };
+    });
   }
 
-  /** Marks `notified` for each delivered notice. Called by the shell after sendMessage. */
-  markNotified(notices: readonly Notice[]): void {
-    for (const n of notices) this.store.appendEvent(n.task, { type: "notified", at: this.now(), run: n.run });
+  /** Marks `notified` for each delivered notice. Called by the shell after the wake is delivered. */
+  markNotified(notices: readonly Notice[]): Promise<void> {
+    return this.mutate(async () => {
+      for (const n of notices) this.store.appendEvent(n.task, { type: "notified", at: this.now(), run: n.run });
+    });
   }
 
   /** Deletes pass.lock while it names this session. Cooks keep running. */
@@ -284,13 +325,6 @@ export class Kitchen extends KitchenReader {
   }
 
   // ---------- the tick ----------
-
-  /** Verify lease, load records, liveness, plan, execute. Serialized: a tick never overlaps another. */
-  tick(): Promise<TickReport> {
-    const next = this.chain.then(() => this.runTick());
-    this.chain = next.catch(() => undefined);
-    return next;
-  }
 
   private async runTick(): Promise<TickReport> {
     if (!leaseIsMine(this.store, this.deps.self)) return { kind: "lost", holder: holderOf(this.store.readLease()) };
@@ -358,8 +392,9 @@ export class Kitchen extends KitchenReader {
     }
   }
 
+  /** Inside a mutation: the tick body runs directly, the chain is already held. */
   private async viewAfterTick(task: TaskId): Promise<TaskView> {
-    const report = await this.tick();
+    const report = await this.runTick();
     if (report.kind === "lost") throw lostError(report.holder);
     const view = report.board.open.find((v) => v.spec.id === task);
     if (view) return view;

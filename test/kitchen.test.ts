@@ -57,7 +57,7 @@ async function waitNotice(kitchen: Kitchen, task: string, timeoutMs = 40_000): P
     if (report.kind === "ok" && report.errors.length) throw new Error(report.errors.join("; "));
     return report.kind === "ok" ? report.notices.find((n) => n.task === task) : undefined;
   }, timeoutMs);
-  kitchen.markNotified([notice]);
+  await kitchen.markNotified([notice]);
   return notice;
 }
 
@@ -281,7 +281,7 @@ test("a cook that finished while no owner ran is reported by the next owner's fi
   assert.equal(first_tick.kind, "ok");
   assert.deepEqual(first_tick.kind === "ok" && first_tick.notices.map((n) => [n.task, n.outcome]), [[view.spec.id, { kind: "done", summary: "quick", reported: true }]]);
   assert.deepEqual(first_tick.kind === "ok" && first_tick.errors, []);
-  second.markNotified(first_tick.kind === "ok" ? first_tick.notices : []);
+  await second.markNotified(first_tick.kind === "ok" ? first_tick.notices : []);
   const second_tick = await second.tick();
   assert.deepEqual(second_tick.kind === "ok" && second_tick.notices, []);
   assert.deepEqual(runFiles(store, view.spec.id), ["1.err", "1.jsonl", "1.prompt.md"]);

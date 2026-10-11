@@ -313,6 +313,9 @@ export type CloseVerdict = { ok: true } | { ok: false; reason: string };
 export function closeVerdict(task: TaskId, state: TaskState, git: GitFacts | undefined, discard: boolean): CloseVerdict {
   if (state.kind === "closed" || discard) return { ok: true };
   if (state.kind === "cooking") return { ok: false, reason: `${task} is still cooking. chef_stop it first, or pass discard: true to drop its work.` };
+  if (state.kind === "queued" && state.why === "message") {
+    return { ok: false, reason: `${task} has an undelivered message and is about to relaunch. chef_stop it first, or pass discard: true to drop the message and the work.` };
+  }
   if (git === undefined) return { ok: true };
   const parts: string[] = [];
   if (git.unlanded > 0) parts.push(`${plural(git.unlanded, "commit")} not on the base branch or any remote branch`);

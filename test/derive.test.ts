@@ -317,10 +317,14 @@ test("close refuses dirty or unlanded work unless discard, and names the counts"
   assert.deepEqual(closeVerdict(id("api-1"), idle, undefined, false), { ok: true });
 });
 
-test("close of a cooking task is refused without discard, and close of a closed task is ok", () => {
+test("close of a cooking task or a task with an undelivered message is refused without discard, and close of a closed task is ok", () => {
   const cooking = deriveTask(record({ runs: [run(1, {})] }), live(), NOW).state;
   assert.equal(closeVerdict(id("api-1"), cooking, undefined, false).ok, false);
   assert.equal(closeVerdict(id("api-1"), cooking, undefined, true).ok, true);
+  const relaunching = deriveTask(record({ runs: [run(1, settledDone())], pendingAt: [millis(2000)] }), none, NOW).state;
+  assert.deepEqual(relaunching, { kind: "queued", why: "message" });
+  assert.match((closeVerdict(id("api-1"), relaunching, undefined, false) as { reason: string }).reason, /undelivered message/);
+  assert.equal(closeVerdict(id("api-1"), relaunching, undefined, true).ok, true);
   assert.deepEqual(closeVerdict(id("api-1"), { kind: "closed", at: NOW, discarded: false }, undefined, false), { ok: true });
 });
 

@@ -50,7 +50,7 @@ All tools are registered with `defaultActive: false` and `exposure: "model-only"
 | `chef_send` | `task`, `message` | One verb for steer, answer, and resume. Cooking: the cook takes it after its current tool call. Idle: the task relaunches on the same session with the message. A cook that reported and is still exiting blocks the relaunch, so `send` ticks until the exit (bounded by `exitWaitMs`, default 5 s) and reports the new run. It reports `queued` only when the cook cap holds the task. |
 | `chef_stop` | `task` | Stops a cooking cook (process group SIGTERM, SIGKILL after a grace period), or holds a queued task. The worktree stays. |
 | `chef_result` | `task` | Outcome, summary, branch, commits ahead of base, landed or not, worktree clean or dirty, diffstat, file pointers. |
-| `chef_close` | `task`, `discard?` | Removes the worktree and closes the task. Refuses dirty or unlanded work unless `discard: true`. |
+| `chef_close` | `task`, `discard?` | Removes the worktree and closes the task. Refuses dirty or unlanded work, a cooking task, and a task with an undelivered message unless `discard: true`. |
 
 The cook role registers one tool, `chef_report {status, summary}`, with `status` one of `done`, `needs_decision`, `blocked`, `failed`. It returns `structuredContent` (the parsed report) and `terminate: true`, so the run ends with no further model call.
 
@@ -128,6 +128,8 @@ The child runs the same Pi as the chef: `process.execPath` plus `process.argv[1]
 ## The tick
 
 `plan(records, live, now, cap)` is pure. It returns task views plus actions: `launch`, `signal`, `remove-worktree`, `notify`. The owner runs a tick every second and after every mutating tool call. Every action is idempotent: launch claims with O_EXCL, signal re-checks identity, worktree removal accepts a missing path, notify dedupes by `task#run`. Startup reconciliation is the first tick. A second tick right after it finds nothing to do.
+
+Ticks and mutations (`addProject`, `dispatch`, `send`, `stop`, `close`, `markNotified`) run on one serialized chain. A mutation runs in the order lease check, read, decide, write, then the tick body. A lost lease is found before the first write, and no interval tick can change a task between the decision and the write. `send` holds the chain while it waits for a reported cook to exit.
 
 A stop request on a live run escalates to SIGKILL after the grace period. A `closed` event with a worktree still on disk finishes the removal.
 
