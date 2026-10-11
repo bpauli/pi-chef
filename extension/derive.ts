@@ -500,8 +500,11 @@ export function boardHeader(board: Board): string {
 
 /** One line per open task, each fitted to `width`. An empty board yields []. */
 export function boardLines(board: Board, now: Millis, width: number): string[] {
-  if (board.open.length === 0) return [];
-  const rows = board.open.map((v) => ({ id: `${glyph(v.state)} ${v.spec.id}`, state: stateText(v.state), detail: detailOf(v), age: ageOf(v, now) }));
+  if (board.open.length === 0 && board.broken.length === 0) return [];
+  const rows = [
+    ...board.open.map((v) => ({ id: `${glyph(v.state)} ${v.spec.id}`, state: stateText(v.state), detail: detailOf(v), age: ageOf(v, now) })),
+    ...board.broken.map((b) => ({ id: `? ${b.id}`, state: "broken", detail: b.reason, age: "" })),
+  ];
   const w0 = Math.max(...rows.map((r) => [...r.id].length));
   const w1 = Math.max(...rows.map((r) => r.state.length));
   const lines = rows.map((r) => {

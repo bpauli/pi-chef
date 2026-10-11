@@ -399,7 +399,7 @@ test("the first wake after a restart starts with the restart line", () => {
 test("boardLines fits every line to the width, counts who needs you, and is empty for an empty board", () => {
   const cooking = deriveTask(record({ runs: [run(1, { startedAt: millis(NOW - 240_000), activity: { kind: "tool", tool: "bash", detail: "npm test" } })] }), live(), NOW);
   const asks = deriveTask(record({ spec: spec({ id: id("web-2") }), runs: [run(1, { settled: true, lastAt: millis(NOW - 60_000), report: { status: "needs_decision", summary: "cookie or bearer token?" } })] }), none, NOW);
-  const board = { role: "owner" as const, holder: undefined, projects: [], open: [cooking, asks], closedCount: 0, cooks: { busy: 1, cap: 3 } };
+  const board = { role: "owner" as const, holder: undefined, projects: [], open: [cooking, asks], broken: [], closedCount: 0, cooks: { busy: 1, cap: 3 } };
   const lines = boardLines(board, NOW, 60);
   assert.equal(lines[0], "chef  1/3 cooks  1 needs you");
   assert.equal(lines[1], "● api-1  cooking         bash: npm test  4m");
@@ -408,12 +408,14 @@ test("boardLines fits every line to the width, counts who needs you, and is empt
   assert.ok(narrow.every((l) => [...l].length <= 36), narrow.join("\n"));
   assert.equal(narrow[1], "● api-1  cooking         bash: …  4m");
   assert.deepEqual(boardLines({ ...board, open: [] }, NOW, 60), []);
+  const withBroken = boardLines({ ...board, open: [], broken: [{ id: id("api-9"), reason: "task.json is not valid JSON." }] }, NOW, 60);
+  assert.deepEqual(withBroken, ["chef  1/3 cooks", "? api-9  broken  task.json is not valid JSON."]);
   assert.equal(statusText(board), "chef 1 cooking, 1 needs you");
   assert.equal(statusText({ ...board, open: [] }), undefined);
 });
 
 test("a read-only board names the owner pid in its header", () => {
   const view = deriveTask(record(), none, NOW);
-  const board = { role: "read-only" as const, holder: { pid: 77 as Pid, sessionId: "s", since: millis(0) }, projects: [], open: [view], closedCount: 0, cooks: { busy: 0, cap: 3 } };
+  const board = { role: "read-only" as const, holder: { pid: 77 as Pid, sessionId: "s", since: millis(0) }, projects: [], open: [view], broken: [], closedCount: 0, cooks: { busy: 0, cap: 3 } };
   assert.equal(boardLines(board, NOW, 80)[0], "chef (read-only, pid 77 owns the kitchen)");
 });

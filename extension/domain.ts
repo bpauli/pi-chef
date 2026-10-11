@@ -209,11 +209,18 @@ export interface Holder {
   since: Millis;
 }
 
+/** A task directory whose files do not parse. Shown, never derived. */
+export interface BrokenTask {
+  id: TaskId;
+  reason: string;
+}
+
 export interface Board {
   role: "owner" | "read-only";
   holder: Holder | undefined;
   projects: Project[];
   open: TaskView[];
+  broken: BrokenTask[];
   closedCount: number;
   cooks: { busy: number; cap: number };
 }

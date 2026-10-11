@@ -22,6 +22,7 @@ import { StringDecoder } from "node:string_decoder";
 import { type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import {
+  type BrokenTask,
   ChefError,
   type Config,
   ConfigSchema,
@@ -45,6 +46,15 @@ import { EMPTY_RUN, type RunFacts, type RunRecord, type TaskRecord, foldRunLine 
 
 export function kitchenDir(env: NodeJS.ProcessEnv, agentDir: string): string {
   return env.CHEF_HOME || join(agentDir, "chef");
+}
+
+export interface Snapshot {
+  config: Config;
+  projects: Project[];
+  records: TaskRecord[];
+  broken: BrokenTask[];
+  /** One line per file that did not parse, for the chef's error channel. */
+  problems: string[];
 }
 
 export interface InboxMessage {
@@ -123,25 +133,65 @@ export class Store {
 
   // ----- config and projects -----
 
-  readConfig(): Config {
+  /** A bad config.json yields the defaults plus the error, so one typo never stops the kitchen. */
+  loadConfig(): { config: Config; error: string | undefined } {
     const path = join(this.dir, "config.json");
-    if (!existsSync(path)) return DEFAULT_CONFIG;
-    const file = parseFile(ConfigSchema, path, readFileSync(path, "utf8"));
-    return {
-      maxCooks: file.maxCooks ?? DEFAULT_CONFIG.maxCooks,
-      model: file.model,
-      thinking: file.thinking,
-      cookArgs: file.cookArgs ?? [],
-    };
+    if (!existsSync(path)) return { config: DEFAULT_CONFIG, error: undefined };
+    try {
+      const file = parseFile(ConfigSchema, path, readFileSync(path, "utf8"));
+      return {
+        config: { maxCooks: file.maxCooks ?? DEFAULT_CONFIG.maxCooks, model: file.model, thinking: file.thinking, cookArgs: file.cookArgs ?? [] },
+        error: undefined,
+      };
+    } catch (e) {
+      return { config: DEFAULT_CONFIG, error: (e as Error).message };
+    }
   }
 
+  readConfig(): Config {
+    return this.loadConfig().config;
+  }
+
+  /** Every project file that parses. `snapshot` reports the ones that do not. */
   readProjects(): Project[] {
+    return this.loadProjects().projects;
+  }
+
+  private loadProjects(): { projects: Project[]; problems: string[] } {
     const dir = join(this.dir, "projects");
-    if (!existsSync(dir)) return [];
-    return readdirSync(dir)
-      .filter((f) => f.endsWith(".json"))
-      .sort()
-      .map((f) => this.readProjectFile(join(dir, f)));
+    if (!existsSync(dir)) return { projects: [], problems: [] };
+    const projects: Project[] = [];
+    const problems: string[] = [];
+    for (const f of readdirSync(dir).filter((f) => f.endsWith(".json")).sort()) {
+      try {
+        projects.push(this.readProjectFile(join(dir, f)));
+      } catch (e) {
+        problems.push((e as Error).message);
+      }
+    }
+    return { projects, problems };
+  }
+
+  /**
+   * Everything one tick reads, each file in isolation: a task whose files do not
+   * parse is listed as broken, a bad config or project file is a problem line,
+   * and the rest of the kitchen goes on.
+   */
+  snapshot(tails: RunTails, skip: ReadonlySet<TaskId>): Snapshot {
+    const { config, error } = this.loadConfig();
+    const { projects, problems } = this.loadProjects();
+    if (error) problems.unshift(error);
+    const records: TaskRecord[] = [];
+    const broken: BrokenTask[] = [];
+    for (const id of this.listTaskIds()) {
+      if (skip.has(id)) continue;
+      try {
+        records.push(this.loadRecord(id, tails));
+      } catch (e) {
+        broken.push({ id, reason: (e as Error).message });
+      }
+    }
+    return { config, projects, records, broken, problems };
   }
 
   readProject(name: ProjectName): Project | undefined {
@@ -198,7 +248,8 @@ export class Store {
       throw e;
     }
     for (const sub of ["runs", join("inbox", "handled"), "session"]) mkdirSync(join(dir, sub), { recursive: true });
-    writeFileSync(join(dir, "task.json"), `${JSON.stringify(spec, null, 2)}\n`, { flag: "wx" });
+    // The mkdir above is the exclusive step; the rename makes the file whole or absent.
+    writeAtomic(join(dir, "task.json"), `${JSON.stringify(spec, null, 2)}\n`);
     return true;
   }
 

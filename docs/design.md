@@ -193,7 +193,7 @@ About 2k lines of source. Any flow passes through at most three files: tool, the
 | `chef.ts` | The Pi shell: tools as one-call adapters, `/chef`, the widget, the `Waker`, activation. |
 | `cook.ts` | The cook half. |
 
-Every file line and run-file line is checked with `Value.Check` before a field is read. A bad line is skipped and counted, never a crash of the tick.
+Every file line and run-file line is checked with `Value.Check` before a field is read. A bad line is skipped and counted, never a crash of the tick. The tick reads the kitchen through one `Store.snapshot`, each file in isolation: a task whose `task.json` does not parse is listed on the board as `broken` with the reason, a bad `config.json` yields the defaults plus an error line, a bad project file is skipped plus an error line. The shell shows an error when it starts and again only after it went away and came back. `task.json` is written through tmp plus rename inside the task directory, whose `mkdir` is the exclusive step.
 
 ## Measured facts on Pi 1.0.3
 

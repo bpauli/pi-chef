@@ -8,7 +8,7 @@ import { after, afterEach, before, test } from "node:test";
 import { ChefError, type Notice, type Pid, type SessionId, type TaskId, millis, parseProjectName, runNo } from "../extension/domain.ts";
 import { alive, runsSession, scanCooks, signalCook } from "../extension/cooks.ts";
 import { Kitchen, type KitchenDeps, KitchenReader, type Opened } from "../extension/kitchen.ts";
-import { Store } from "../extension/store.ts";
+import { RunTails, Store } from "../extension/store.ts";
 import { CHEF_ENTRY, COMMIT_STEP, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, SLOW_EXIT, type TempKitchen, git, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
 
 let fake: Awaited<ReturnType<typeof startFakeModel>>;
@@ -25,9 +25,9 @@ afterEach(async () => {
 /** Kills every cook of this kitchen that a test left behind. */
 async function reapCooks(store: Store): Promise<void> {
   const cooks = await scanCooks();
-  for (const id of store.listTaskIds()) {
-    const pid = cooks.get(store.readSpec(id).sessionId);
-    if (pid) await signalCook(pid, store.readSpec(id).sessionId, "SIGKILL");
+  for (const rec of store.snapshot(new RunTails(), new Set()).records) {
+    const pid = cooks.get(rec.spec.sessionId);
+    if (pid) await signalCook(pid, rec.spec.sessionId, "SIGKILL");
   }
 }
 

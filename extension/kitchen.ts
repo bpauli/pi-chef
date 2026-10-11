@@ -25,7 +25,7 @@ import {
 import { type Action, type GitFacts, type LiveCooks, type TaskRecord, closeVerdict, deriveTask, nextRunOf, plan } from "./derive.ts";
 import { type CookEnd, CookTable, type PiInvocation, firstPrompt, followUpPrompt, launchCook, messagesSection, pidStart, signalCook } from "./cooks.ts";
 import { type RemoveResult, diffstat, ensureWorktree, gitFacts, inspectRepo, removeWorktree } from "./git.ts";
-import { RunTails, type Store } from "./store.ts";
+import { RunTails, type Snapshot, type Store } from "./store.ts";
 
 export interface KitchenDeps {
   store: Store;
@@ -111,16 +111,16 @@ export class KitchenReader {
   }
 
   async board(): Promise<Board> {
-    const records = this.loadRecords();
-    const live = await this.liveCooks(records);
-    const { views } = plan({ records, live, now: this.now(), cap: this.store.readConfig().maxCooks, killGraceMs: 0 });
-    return this.boardOf(views, "read-only", holderOf(this.store.readLease()));
+    const snap = this.snapshot();
+    const live = await this.liveCooks(snap.records);
+    const { views } = plan({ records: snap.records, live, now: this.now(), cap: snap.config.maxCooks, killGraceMs: 0 });
+    return this.boardOf(views, snap, "read-only", holderOf(this.store.readLease()));
   }
 
   async result(task: TaskId): Promise<TaskResult> {
     const rec = this.store.loadRecord(task, this.tails);
     const live = await this.liveCooks([rec]);
-    const view = plan({ records: [rec], live, now: this.now(), cap: 1, killGraceMs: 0 }).views[0]!;
+    const view = deriveTask(rec, live, this.now());
     const project = this.store.readProject(rec.spec.project);
     const git = project ? await gitFacts(project.path, rec.spec.worktree, rec.spec.branch, rec.spec.baseBranch) : undefined;
     const stat = project && git ? await diffstat(project.path, rec.spec.branch, rec.spec.baseBranch) : "";
@@ -135,11 +135,8 @@ export class KitchenReader {
     };
   }
 
-  protected loadRecords(): TaskRecord[] {
-    return this.store
-      .listTaskIds()
-      .filter((id) => !this.finished.has(id))
-      .map((id) => this.store.loadRecord(id, this.tails));
+  protected snapshot(): Snapshot {
+    return this.store.snapshot(this.tails, this.finished);
   }
 
   /**
@@ -164,7 +161,7 @@ export class KitchenReader {
     return live;
   }
 
-  protected boardOf(views: TaskView[], role: Board["role"], holder: Holder | undefined): Board {
+  protected boardOf(views: TaskView[], snap: Snapshot, role: Board["role"], holder: Holder | undefined): Board {
     const open = views.filter((v) => v.state.kind !== "closed").sort((a, b) => b.spec.createdAt - a.spec.createdAt);
     for (const v of views) {
       if (v.state.kind === "closed" && !this.store.loadRecord(v.spec.id, this.tails).worktreeExists) {
@@ -176,10 +173,11 @@ export class KitchenReader {
     return {
       role,
       holder,
-      projects: this.store.readProjects(),
+      projects: snap.projects,
       open,
+      broken: snap.broken,
       closedCount,
-      cooks: { busy: views.filter((v) => v.state.kind === "cooking").length, cap: this.store.readConfig().maxCooks },
+      cooks: { busy: views.filter((v) => v.state.kind === "cooking").length, cap: snap.config.maxCooks },
     };
   }
 }
@@ -338,12 +336,13 @@ export class Kitchen extends KitchenReader {
 
   private async runTick(): Promise<TickReport> {
     if (!leaseIsMine(this.store, this.deps.self)) return { kind: "lost", holder: holderOf(this.store.readLease()) };
-    const records = this.loadRecords();
+    const snap = this.snapshot();
+    const { records } = snap;
     const live = await this.liveCooks(records);
-    const cap = this.store.readConfig().maxCooks;
+    const cap = snap.config.maxCooks;
     const { views, actions } = plan({ records, live, now: this.now(), cap, killGraceMs: this.deps.killGraceMs ?? 5000 });
     const notices: Notice[] = [];
-    const errors: string[] = [];
+    const errors: string[] = [...snap.problems];
     let launched = false;
     for (const action of actions) {
       launched ||= action.kind === "launch";
@@ -355,8 +354,8 @@ export class Kitchen extends KitchenReader {
       }
     }
     // A launch attempt changes the views this tick reports: the board shows the cook or the failure, not the queue.
-    const fresh = launched ? plan({ records: this.loadRecords(), live: await this.cooks.live(), now: this.now(), cap, killGraceMs: 0 }).views : views;
-    return { kind: "ok", board: this.boardOf(fresh, "owner", holderOf(this.store.readLease())), notices, errors };
+    const fresh = launched ? plan({ records: this.snapshot().records, live: await this.cooks.live(), now: this.now(), cap, killGraceMs: 0 }).views : views;
+    return { kind: "ok", board: this.boardOf(fresh, snap, "owner", holderOf(this.store.readLease())), notices, errors };
   }
 
   private async execute(action: Exclude<Action, { kind: "notify" }>, rec: TaskRecord): Promise<void> {
@@ -432,7 +431,7 @@ export class Kitchen extends KitchenReader {
     const view = report.board.open.find((v) => v.spec.id === task);
     if (view) return view;
     const rec = this.store.loadRecord(task, this.tails);
-    return plan({ records: [rec], live: new Map(), now: this.now(), cap: 1, killGraceMs: 0 }).views[0]!;
+    return deriveTask(rec, new Map(), this.now());
   }
 
   private requireProject(name: string): Project {

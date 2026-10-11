@@ -132,12 +132,14 @@ test("moveToHandled tolerates a message the cook already moved", () => {
   });
 });
 
-test("readConfig: a missing file gives defaults, a wrong type names the field", () => {
+test("loadConfig: a missing file gives defaults, a wrong type gives defaults plus an error that names the field", () => {
   withDir((dir) => {
     const store = new Store(dir);
     assert.deepEqual(store.readConfig(), { maxCooks: 3, model: undefined, thinking: undefined, cookArgs: [] });
     writeFileSync(join(dir, "config.json"), JSON.stringify({ maxCooks: "three" }));
-    assert.throws(() => store.readConfig(), (e: unknown) => e instanceof ChefError && e.message.includes("/maxCooks"));
+    const bad = store.loadConfig();
+    assert.deepEqual(bad.config, { maxCooks: 3, model: undefined, thinking: undefined, cookArgs: [] });
+    assert.match(bad.error ?? "", /config\.json is invalid at \/maxCooks/);
     writeFileSync(join(dir, "config.json"), JSON.stringify({ maxCooks: 1, cookArgs: ["-e", "x.ts"] }));
     assert.deepEqual(store.readConfig(), { maxCooks: 1, model: undefined, thinking: undefined, cookArgs: ["-e", "x.ts"] });
   });

@@ -146,7 +146,7 @@ interface ChefSession {
   restart: RestartNote | undefined;
   firstTick: boolean;
   ticking: boolean;
-  shown: Set<string>;
+  lastErrors: Set<string>;
 }
 
 const agentDir = (): string => process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
@@ -184,7 +184,7 @@ export function installChef(pi: ExtensionAPI): void {
       restart: undefined,
       firstTick: true,
       ticking: false,
-      shown: new Set(),
+      lastErrors: new Set(),
     };
     current.timer.unref();
     if (owner) {
@@ -199,6 +199,12 @@ export function installChef(pi: ExtensionAPI): void {
     if (!chefModeOn(ctx)) pi.appendEntry("chef-mode", { on: true });
     await tick(ctx);
     return current;
+  };
+
+  // An error is shown when it starts, and again after it went away and came back.
+  const showErrors = (s: ChefSession, ctx: ExtensionContext, errors: readonly string[]): void => {
+    for (const err of errors) if (!s.lastErrors.has(err) && ctx.hasUI) ctx.ui.notify(`chef: ${err}`, "error");
+    s.lastErrors = new Set(errors);
   };
 
   const tick = async (ctx: ExtensionContext): Promise<void> => {
@@ -218,11 +224,7 @@ export function installChef(pi: ExtensionAPI): void {
         } else {
           if (s.firstTick && report.notices.length) s.restart = { cooking: report.board.cooks.busy, finished: report.notices.length };
           s.waker?.offer(report.notices);
-          for (const err of report.errors) {
-            if (s.shown.has(err)) continue;
-            s.shown.add(err);
-            if (ctx.hasUI) ctx.ui.notify(`chef: ${err}`, "error");
-          }
+          showErrors(s, ctx, report.errors);
           board = report.board;
         }
       } else {
@@ -237,11 +239,7 @@ export function installChef(pi: ExtensionAPI): void {
         ctx.ui.setStatus("chef", statusText(board));
       }
     } catch (e) {
-      const text = `chef tick failed: ${(e as Error).message}`;
-      if (!s.shown.has(text)) {
-        s.shown.add(text);
-        if (ctx.hasUI) ctx.ui.notify(text, "error");
-      }
+      showErrors(s, ctx, [`tick failed: ${(e as Error).message}`]);
     } finally {
       s.ticking = false;
     }
@@ -438,7 +436,7 @@ export function installChef(pi: ExtensionAPI): void {
 async function boardText(reader: KitchenReader): Promise<string> {
   const board = await reader.board();
   const projects = board.projects.length ? board.projects.map((p) => `${p.name}: ${p.path} (base ${p.baseBranch})`).join("\n") : "No projects. Register one with chef_add_project.";
-  const lines = board.open.length ? boardLines(board, now(), BOARD_WIDTH) : [boardHeader(board), "No open tasks."];
+  const lines = board.open.length || board.broken.length ? boardLines(board, now(), BOARD_WIDTH) : [boardHeader(board), "No open tasks."];
   const closed = board.closedCount ? `${plural(board.closedCount, "closed task")} not shown.` : "";
   return [projects, "", ...lines, closed].filter((l, i, all) => l !== "" || i < all.length - 1).join("\n");
 }
