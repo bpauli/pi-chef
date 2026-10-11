@@ -10,6 +10,7 @@ export const ROOT = resolve(import.meta.dirname, "..");
 export const PI_CLI = join(ROOT, "node_modules/@earendil-works/pi-coding-agent/dist/cli.js");
 export const CHEF_ENTRY = join(ROOT, "extension/index.ts");
 export const FAKE_PROVIDER = join(ROOT, "test/fake-model/provider.ts");
+export const SLOW_EXIT = join(ROOT, "test/slow-exit.ts");
 export const FAKE_MODEL = "fake/scripted";
 
 export async function startFakeModel(): Promise<{ port: string; stop(): void }> {

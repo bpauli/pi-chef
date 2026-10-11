@@ -6,10 +6,10 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from "node:path";
 import { after, afterEach, before, test } from "node:test";
 import { ChefError, type Notice, type Pid, type SessionId, type TaskId, millis, parseProjectName, runNo } from "../extension/domain.ts";
-import { alive, scanCooks, signalCook } from "../extension/cooks.ts";
+import { alive, runsSession, scanCooks, signalCook } from "../extension/cooks.ts";
 import { Kitchen, KitchenReader, type Opened } from "../extension/kitchen.ts";
 import { Store } from "../extension/store.ts";
-import { CHEF_ENTRY, COMMIT_STEP, PI_CLI, REPORT_STEP, type TempKitchen, git, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
+import { CHEF_ENTRY, COMMIT_STEP, FAKE_PROVIDER, PI_CLI, REPORT_STEP, SLOW_EXIT, type TempKitchen, git, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
 
 let fake: Awaited<ReturnType<typeof startFakeModel>>;
 let tk: TempKitchen;
@@ -123,6 +123,24 @@ test("needs_decision wakes with the question; chef_send relaunches run 2 on the 
   assert.equal(readdirSync(join(store.inboxDir(view.spec.id), "handled")).length, 1);
   assert.deepEqual(store.pendingMessages(view.spec.id), []);
   assert.equal((await kitchen.result(view.spec.id)).git?.ahead, 1);
+});
+
+test("send to a cook that reported and is still exiting waits for the exit and reports relaunched, not queued behind the cap", async () => {
+  const { kitchen, store } = await setup({ cookArgs: ["-e", FAKE_PROVIDER, "-e", SLOW_EXIT] });
+  const brief = [REPORT_STEP("needs_decision", "cookie or bearer token?"), REPORT_STEP("done", "used cookies")].join("\n");
+  const view = await kitchen.dispatch({ project: "api", title: "Fix login", brief });
+  const n1 = await waitNotice(kitchen, view.spec.id);
+  assert.equal(n1.outcome.kind, "needs_decision");
+  const oldPid = (await scanCooks()).get(view.spec.sessionId);
+  assert.ok(oldPid !== undefined, "the reported cook is still exiting when send is called");
+
+  const delivery = await kitchen.send(view.spec.id, "use cookies");
+  assert.deepEqual(delivery, { kind: "relaunched", run: 2 });
+  assert.equal(await runsSession(oldPid, view.spec.sessionId), false, "run 2 started only after the old cook exited");
+  const n2 = await waitNotice(kitchen, view.spec.id);
+  assert.deepEqual(n2.outcome, { kind: "done", summary: "used cookies", reported: true });
+  assert.equal(n2.run, 2);
+  assert.deepEqual(store.pendingMessages(view.spec.id), []);
 });
 
 test("a message sent while the cook runs is steered into the same run and no second run starts", async () => {
