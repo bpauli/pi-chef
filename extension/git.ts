@@ -65,7 +65,10 @@ export async function ensureWorktree(repo: string, worktree: string, branch: str
 /**
  * dirtyFiles from `status --porcelain` (ignored files do not count), ahead from
  * `rev-list base..branch`, unlanded from `rev-list branch --not base --remotes`,
- * so a commit on a pushed remote branch counts as landed. Missing worktree -> undefined.
+ * so a commit on a remote-tracking ref (as of the last fetch) counts as landed.
+ * onBranch is false for a detached HEAD, another branch, or a rebase in
+ * progress: commits made there are not on the task branch and would be lost
+ * with the worktree. Missing worktree -> undefined.
  */
 export async function gitFacts(repo: string, worktree: string, branch: string, baseBranch: string): Promise<GitFacts | undefined> {
   if (!existsSync(worktree)) return undefined;
@@ -73,7 +76,8 @@ export async function gitFacts(repo: string, worktree: string, branch: string, b
   const dirtyFiles = status ? status.split("\n").length : 0;
   const ahead = Number(await git(repo, ["rev-list", "--count", `${baseBranch}..${branch}`]));
   const unlanded = Number(await git(repo, ["rev-list", "--count", branch, "--not", baseBranch, "--remotes"]));
-  return { dirtyFiles, ahead, unlanded };
+  const head = await git(worktree, ["symbolic-ref", "-q", "--short", "HEAD"]).catch(() => "");
+  return { dirtyFiles, ahead, unlanded, onBranch: head === branch };
 }
 
 /** `git diff --stat base...branch`, capped. */
@@ -83,13 +87,24 @@ export async function diffstat(repo: string, branch: string, baseBranch: string)
   return lines.length > DIFFSTAT_LINES ? [...lines.slice(0, DIFFSTAT_LINES), `... ${lines.length - DIFFSTAT_LINES} more lines`].join("\n") : text;
 }
 
+/** What `removeWorktree` did. A missing worktree or branch is success. */
+export interface RemoveResult {
+  worktree: "removed" | "missing";
+  branch: "deleted" | "kept" | "missing";
+}
+
 /**
- * `worktree remove` (forced when discarding) then `branch -d`, or `-D` when
- * discarding. A missing worktree or branch is success. An unmerged branch
- * survives a non-discard close so its commits stay reachable.
+ * `worktree remove` (forced when discarding), then the branch goes only when
+ * every commit on it is on the base branch, or when discarding. `branch -d`
+ * is not used: it also deletes a branch whose upstream contains it, and a
+ * remote-tracking ref can be stale after the remote branch was deleted.
  */
-export async function removeWorktree(repo: string, worktree: string, branch: string, discard: boolean): Promise<void> {
-  if (existsSync(worktree)) await git(repo, ["worktree", "remove", ...(discard ? ["--force"] : []), worktree]);
+export async function removeWorktree(repo: string, worktree: string, branch: string, baseBranch: string, discard: boolean): Promise<RemoveResult> {
+  const hadWorktree = existsSync(worktree);
+  if (hadWorktree) await git(repo, ["worktree", "remove", ...(discard ? ["--force"] : []), worktree]);
   await git(repo, ["worktree", "prune"]);
-  if ((await git(repo, ["branch", "--list", branch])) !== "") await ok(repo, ["branch", discard ? "-D" : "-d", branch]);
+  if ((await git(repo, ["branch", "--list", branch])) === "") return { worktree: hadWorktree ? "removed" : "missing", branch: "missing" };
+  const landed = discard || (await ok(repo, ["merge-base", "--is-ancestor", branch, baseBranch]));
+  const deleted = landed && (await ok(repo, ["branch", "-D", branch]));
+  return { worktree: hadWorktree ? "removed" : "missing", branch: deleted ? "deleted" : "kept" };
 }

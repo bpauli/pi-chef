@@ -403,9 +403,11 @@ export function installChef(pi: ExtensionAPI): void {
     async execute(_id, params) {
       const p = checked(CloseParams, params);
       const id = task(p.task);
-      const { view, branchKept } = await owner().close(id, p.discard === true);
-      const branch = branchKept ? `Branch ${view.spec.branch} kept, it still has commits.` : `Branch ${view.spec.branch} deleted.`;
-      return text(`${id} closed. Worktree removed. ${branch}`);
+      const { view, removal } = await owner().close(id, p.discard === true);
+      if ("error" in removal) return text(`${id} closed. Removing its worktree failed: ${removal.error} chef retries it on every tick.`);
+      const worktree = removal.worktree === "removed" ? "Worktree removed." : "Worktree was already gone.";
+      const branch = { deleted: `Branch ${view.spec.branch} deleted.`, kept: `Branch ${view.spec.branch} kept: its commits are not on ${view.spec.baseBranch}.`, missing: `Branch ${view.spec.branch} was already gone.` }[removal.branch];
+      return text(`${id} closed. ${worktree} ${branch}`);
     },
   });
 
@@ -454,9 +456,10 @@ export function resultText(r: TaskResult, at: Millis): string {
     if (body) lines.push(`${o.kind === "needs_decision" ? "Question" : o.kind === "done" ? "Summary" : "Reason"}: ${body.trim().slice(0, 2000)}`);
   }
   if (r.git) {
-    const landed = r.git.unlanded === 0 ? (r.git.ahead ? "all landed" : "nothing to land") : `${r.git.unlanded} not landed`;
+    const landed = r.git.unlanded === 0 ? (r.git.ahead ? "all on a remote-tracking ref as of the last fetch" : "nothing to land") : `${r.git.unlanded} not landed`;
     const clean = r.git.dirtyFiles ? `${plural(r.git.dirtyFiles, "changed file")}` : "clean";
-    lines.push(`Branch ${spec.branch} in ${spec.worktree}: ${plural(r.git.ahead, "commit")} ahead of ${spec.baseBranch}, ${landed}, ${clean}.`);
+    const head = r.git.onBranch ? "" : ` HEAD is not on ${spec.branch}: commits made there are not on the task branch.`;
+    lines.push(`Branch ${spec.branch} in ${spec.worktree}: ${plural(r.git.ahead, "commit")} ahead of ${spec.baseBranch}, ${landed}, ${clean}.${head}`);
     if (r.diffstat) lines.push(r.diffstat);
   } else {
     lines.push(`Worktree ${spec.worktree} is gone. Branch ${spec.branch} may still exist in ${r.project?.path ?? "the repository"}.`);

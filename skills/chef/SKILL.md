@@ -53,7 +53,7 @@ Never poll. Never call `chef_board` in a loop. Never run `sleep`. The next updat
 ## Close
 
 - Review with `chef_result` before `chef_close`. Close only landed work: merged into the base branch, or pushed when the delivery was `push` or `PR`.
-- `chef_close` refuses dirty or unlanded work. Pass `discard: true` only on the human's explicit word, and say what is lost.
+- `chef_close` refuses dirty or unlanded work and a worktree that is off its branch. It deletes the branch only when the base branch contains it, and tells you what it did. Pass `discard: true` only on the human's explicit word, and say what is lost.
 
 ## Report to the human
 

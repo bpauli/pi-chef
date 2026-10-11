@@ -362,8 +362,10 @@ export interface GitFacts {
   dirtyFiles: number;
   /** Commits on the branch not on the base branch. */
   ahead: number;
-  /** Commits on the branch reachable from neither the base branch nor any remote branch. */
+  /** Commits on the branch reachable from neither the base branch nor any remote-tracking ref. */
   unlanded: number;
+  /** The worktree HEAD is the task branch. False for a detached HEAD, another branch, or a rebase in progress. */
+  onBranch: boolean;
 }
 
 export type CloseVerdict = { ok: true } | { ok: false; reason: string };
@@ -375,6 +377,9 @@ export function closeVerdict(task: TaskId, state: TaskState, git: GitFacts | und
     return { ok: false, reason: `${task} has an undelivered message and is about to relaunch. chef_stop it first, or pass discard: true to drop the message and the work.` };
   }
   if (git === undefined) return { ok: true };
+  if (!git.onBranch) {
+    return { ok: false, reason: `${task}'s worktree HEAD is not on chef/${task}: a detached HEAD, another branch, or a rebase in progress. Its commits would be lost with the worktree. Put them on chef/${task} first, or pass discard: true if the human said to drop them.` };
+  }
   const parts: string[] = [];
   if (git.unlanded > 0) parts.push(`${plural(git.unlanded, "commit")} not on the base branch or any remote branch`);
   if (git.dirtyFiles > 0) parts.push(`${plural(git.dirtyFiles, "changed file")} in the worktree`);

@@ -22,4 +22,4 @@ Use these words in code, docs, tool text, and commit messages. One word means on
 | wake | One `chef-wake` message that tells the chef about one or more new outcomes and starts a chef turn. | `extension/chef.ts` |
 | board | The view of all open tasks: state, current activity, and age. Shown as a widget, by `/chef`, and by `chef_board`. | `extension/derive.ts` |
 | tick | One pass of the reconcile loop: read files and processes, derive task states, plan actions, run them. Startup reconciliation is the first tick. | `extension/kitchen.ts` |
-| landed | A task's commits are reachable from the project base branch or from a remote branch. `chef_close` removes a worktree only when its work is landed or the caller discards it. | `extension/git.ts` |
+| landed | A task's commits are reachable from the project base branch or from a remote-tracking ref as of the last fetch. `chef_close` removes a worktree only when its work is landed or the caller discards it, and deletes the task branch only when the base branch contains it. | `extension/git.ts` |

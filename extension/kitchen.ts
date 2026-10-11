@@ -24,7 +24,7 @@ import {
 } from "./domain.ts";
 import { type Action, type GitFacts, type LiveCooks, type TaskRecord, closeVerdict, deriveTask, nextRunOf, plan } from "./derive.ts";
 import { type CookEnd, CookTable, type PiInvocation, firstPrompt, followUpPrompt, launchCook, messagesSection, pidStart, signalCook } from "./cooks.ts";
-import { diffstat, ensureWorktree, gitFacts, inspectRepo, removeWorktree } from "./git.ts";
+import { type RemoveResult, diffstat, ensureWorktree, gitFacts, inspectRepo, removeWorktree } from "./git.ts";
 import { RunTails, type Store } from "./store.ts";
 
 export interface KitchenDeps {
@@ -295,9 +295,10 @@ export class Kitchen extends KitchenReader {
 
   /**
    * Refuses unless closeVerdict says ok. Order makes it crash-safe: stop a live
-   * cook when discarding, append `closed`, then the tick removes the worktree.
+   * cook when discarding, append `closed`, then remove the worktree and report
+   * what git did. A removal that fails here is retried by every tick.
    */
-  close(task: TaskId, discard: boolean): Promise<{ view: TaskView; branchKept: boolean }> {
+  close(task: TaskId, discard: boolean): Promise<{ view: TaskView; removal: RemoveResult | { error: string } }> {
     return this.mutate(async () => {
       const rec = this.store.loadRecord(task, this.tails);
       const live = await this.liveCooks([rec]);
@@ -306,11 +307,18 @@ export class Kitchen extends KitchenReader {
       const git = project ? await gitFacts(project.path, rec.spec.worktree, rec.spec.branch, rec.spec.baseBranch) : undefined;
       const verdict = closeVerdict(task, before.state, git, discard);
       if (!verdict.ok) throw new ChefError(verdict.reason);
-      if (before.state.kind === "closed") return { view: before, branchKept: false };
-      if (before.state.kind === "cooking") await this.stopNow(rec, live);
-      this.store.appendEvent(task, { type: "closed", at: this.now(), discarded: discard });
-      const view = await this.viewAfterTick(task);
-      return { view, branchKept: !discard && (git?.ahead ?? 0) > 0 };
+      const discarded = before.state.kind === "closed" ? before.state.discarded : discard;
+      if (before.state.kind !== "closed") {
+        if (before.state.kind === "cooking") await this.stopNow(rec, live);
+        this.store.appendEvent(task, { type: "closed", at: this.now(), discarded: discard });
+      }
+      let removal: RemoveResult | { error: string };
+      try {
+        removal = project ? await removeWorktree(project.path, rec.spec.worktree, rec.spec.branch, rec.spec.baseBranch, discarded) : { error: `project ${rec.spec.project} is not registered` };
+      } catch (e) {
+        removal = { error: (e as Error).message };
+      }
+      return { view: await this.viewAfterTick(task), removal };
     });
   }
 
@@ -367,7 +375,7 @@ export class Kitchen extends KitchenReader {
         return;
       case "remove-worktree": {
         const project = this.store.readProject(spec.project);
-        if (project) await removeWorktree(project.path, spec.worktree, spec.branch, action.discard);
+        if (project) await removeWorktree(project.path, spec.worktree, spec.branch, spec.baseBranch, action.discard);
         return;
       }
     }

@@ -143,6 +143,12 @@ Ticks and mutations (`addProject`, `dispatch`, `send`, `stop`, `close`, `markNot
 
 A stop request on a live run escalates to SIGKILL after the grace period. A `closed` event with a worktree still on disk finishes the removal.
 
+### Close and branch deletion
+
+`chef_close` refuses, unless `discard`: a cooking task, a task queued with an undelivered message, a dirty worktree, commits on neither the base branch nor a remote-tracking ref, and a worktree whose HEAD is not the task branch (detached, another branch, a rebase in progress), because commits made there go away with the worktree. "Landed by a remote branch" means a remote-tracking ref as of the last fetch; `chef_result` says so.
+
+The close operation appends `closed`, removes the worktree itself, and reports what git did: worktree removed or already gone, branch deleted, kept, or already gone, or the git error. The branch is deleted only when it is an ancestor of the base branch (`merge-base --is-ancestor`) or when discarding. `git branch -d` is not used: it deletes a branch whose upstream contains it, and that remote-tracking ref can be stale. A pushed but unmerged task closes with its branch kept.
+
 ## Wakes
 
 A notice is due when a task is idle with a final outcome other than `stopped`, its run has no `notified` event, and it has no pending relaunch. The `Waker` batches notices: the first opens a 1.5 s quiet window, each new notice extends it, and the total wait is capped at 5 s. Then it sends one message:

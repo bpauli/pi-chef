@@ -41,7 +41,7 @@ The chef model loads the `chef` skill and uses these tools:
 | `chef_send` | One verb for steer, answer, and resume. A cooking cook reads the message after its current tool call. An idle task restarts on the same Pi session with it. |
 | `chef_stop` | Stops a cook, or holds a queued task. The worktree and branch stay. |
 | `chef_result` | Outcome, summary, branch, commits ahead of base, landed or not, worktree clean or dirty, diffstat, transcript path. |
-| `chef_close` | Removes the worktree and closes the task. Refuses dirty or unlanded work unless `discard: true`. |
+| `chef_close` | Removes the worktree and closes the task. Refuses dirty or unlanded work unless `discard: true`. Deletes the branch only when the base branch contains it. |
 
 The `/chef` command takes `on` (default), `off`, `takeover`, and `board`. One chef session owns the kitchen at a time. A second session opens read-only and can show the board and results. `/chef takeover` moves the kitchen to the current session.
 
