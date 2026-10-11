@@ -330,6 +330,18 @@ test("maxCooks 1: the second task queues and starts after the first finishes", a
   assert.deepEqual(n2.outcome, { kind: "done", summary: "second", reported: true });
 });
 
+test("a held queued task that chef_send resumes runs to its report and is not stopped when its cook starts", async () => {
+  const { kitchen, store } = await setup({ maxCooks: 1 });
+  const t1 = await kitchen.dispatch({ project: "api", title: "First", brief: `STEP bash: sleep 3\n${REPORT_STEP("done", "first")}` });
+  const t2 = await kitchen.dispatch({ project: "web", title: "Second", brief: REPORT_STEP("done", "second") });
+  assert.deepEqual((await kitchen.stop(t2.spec.id)).view.state, { kind: "idle", run: undefined, since: store.readEvents(t2.spec.id)[0]!.at, outcome: { kind: "stopped" } });
+  assert.deepEqual(store.readEvents(t2.spec.id).map((e) => e.type), ["hold"]);
+  assert.deepEqual(await kitchen.send(t2.spec.id, "go"), { kind: "queued", position: 1 });
+  await waitNotice(kitchen, t1.spec.id);
+  const n2 = await waitNotice(kitchen, t2.spec.id);
+  assert.deepEqual(n2.outcome, { kind: "done", summary: "second", reported: true });
+});
+
 test("a prompt file without a run file is relaunched from that prompt (interrupted launch)", async () => {
   const { kitchen, store } = await setup();
   const id = store.nextTaskId(parseProjectName("api"));

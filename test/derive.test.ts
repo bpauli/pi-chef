@@ -272,8 +272,8 @@ test("a pending message turns an idle task into queued(message)", () => {
   assert.deepEqual(deriveTask(rec, none, NOW).state, { kind: "queued", why: "message" });
 });
 
-test("a task with no runs and a stop event is idle(stopped), and a newer message resumes it", () => {
-  const events: TaskEvent[] = [{ type: "stop", at: 5000, run: 1 }];
+test("a task with no runs and a hold event is idle(stopped), and a newer message resumes it", () => {
+  const events: TaskEvent[] = [{ type: "hold", at: 5000, run: 1 }];
   const held = deriveTask(record({ events, pendingAt: [millis(4000)] }), none, NOW).state;
   assert.deepEqual(held, { kind: "idle", run: undefined, since: 5000, outcome: { kind: "stopped" } });
   const resumed = deriveTask(record({ events, pendingAt: [millis(4000), millis(6000)] }), none, NOW).state;
@@ -286,12 +286,22 @@ test("a message posted in the same millisecond as the stop resumes the task: the
   assert.deepEqual(deriveTask(record({ events, runs: [run(1, { settled: false })], pendingAt: [millis(4999)] }), none, NOW).state.kind, "idle");
 });
 
-test("a stop that names the next run holds an idle task that has pending messages", () => {
-  const events: TaskEvent[] = [{ type: "stop", at: 5000, run: 2 }];
+test("a hold that names the next run holds an idle task that has pending messages", () => {
+  const events: TaskEvent[] = [{ type: "hold", at: 5000, run: 2 }];
   const rec = record({ events, runs: [run(1, settledDone())], pendingAt: [millis(4000)] });
   const state = deriveTask(rec, none, NOW).state;
   assert.equal(state.kind, "idle");
   assert.deepEqual(state.kind === "idle" && state.outcome, { kind: "stopped" });
+});
+
+test("a held task that a newer message resumed is not signalled, and its run does not end as stopped", () => {
+  const events: TaskEvent[] = [{ type: "hold", at: 5000, run: 1 }];
+  const rec = record({ events, runs: [run(1, {})] });
+  const cooking = plan({ records: [rec], live: live(), now: NOW, cap: 3, killGraceMs: 5000, exitGraceMs: 10_000, reclaimAfterMs: 30_000 });
+  assert.equal(cooking.views[0]!.state.kind, "cooking");
+  assert.deepEqual(cooking.actions, []);
+  const died = deriveTask(rec, none, NOW).state;
+  assert.deepEqual(died.kind === "idle" && died.outcome, { kind: "failed", reason: "cook exited before settling" });
 });
 
 test("a closed event wins over every other fact", () => {

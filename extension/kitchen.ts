@@ -282,8 +282,8 @@ export class Kitchen extends KitchenReader {
   private async stopNow(rec: TaskRecord, live: LiveCooks): Promise<boolean> {
     const task = rec.spec.id;
     const { state } = deriveTask(rec, live, this.now());
-    const run = state.kind === "cooking" ? state.run : state.kind === "queued" ? nextRunOf(rec) : undefined;
-    if (run !== undefined) this.store.appendEvent(task, { type: "stop", at: this.now(), run });
+    if (state.kind === "cooking") this.store.appendEvent(task, { type: "stop", at: this.now(), run: state.run });
+    if (state.kind === "queued") this.store.appendEvent(task, { type: "hold", at: this.now(), run: nextRunOf(rec) });
     const pid = live.get(rec.spec.sessionId);
     if (pid === undefined || state.kind === "queued") return false;
     await signalCook(pid, rec.spec.sessionId, "SIGTERM");

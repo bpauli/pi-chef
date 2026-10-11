@@ -143,6 +143,7 @@ interface Folded {
   last: RunRecord | undefined;
   nextRun: RunNo;
   lastStop: Extract<TaskEvent, { type: "stop" }> | undefined;
+  lastPause: Extract<TaskEvent, { type: "stop" | "hold" }> | undefined;
   closed: Extract<TaskEvent, { type: "closed" }> | undefined;
   launchFailure: LaunchFailure | undefined;
   resumable: boolean;
@@ -169,21 +170,23 @@ function launchFailureOf(rec: TaskRecord, last: RunRecord | undefined): LaunchFa
 function fold(rec: TaskRecord): Folded {
   const last = rec.runs.at(-1);
   const lastStop = rec.events.filter((e) => e.type === "stop").at(-1);
+  const lastPause = rec.events.filter((e) => e.type === "stop" || e.type === "hold").at(-1);
   const closed = rec.events.find((e) => e.type === "closed");
   const launchFailure = launchFailureOf(rec, last);
   const started = last !== undefined && last.claimed && last.bytes > 0;
   const fromRuns = last === undefined ? 1 : started ? last.n + 1 : last.n;
   const nextRun = runNo(Math.max(fromRuns, launchFailure ? launchFailure.run + 1 : 1));
-  const holdAt = Math.max(lastStop?.at ?? Number.NEGATIVE_INFINITY, launchFailure?.at ?? Number.NEGATIVE_INFINITY);
+  const holdAt = Math.max(lastPause?.at ?? Number.NEGATIVE_INFINITY, launchFailure?.at ?? Number.NEGATIVE_INFINITY);
   const resumable = rec.pendingAt.some((at) => at >= holdAt);
   return {
     last,
     nextRun,
     lastStop,
+    lastPause,
     closed,
     launchFailure,
     resumable,
-    held: lastStop !== undefined && lastStop.run === nextRun && !resumable,
+    held: lastPause !== undefined && lastPause.run === nextRun && !resumable,
     briefDelivered: rec.runs.some((r) => r.facts.prompted),
   };
 }
@@ -194,7 +197,7 @@ export function nextRunOf(rec: TaskRecord): RunNo {
 
 export function deriveTask(rec: TaskRecord, live: LiveCooks, now: Millis): TaskView {
   const view = (state: TaskState): TaskView => ({ spec: rec.spec, state });
-  const { last, lastStop, closed, launchFailure, resumable, held } = fold(rec);
+  const { last, lastStop, lastPause, closed, launchFailure, resumable, held } = fold(rec);
   if (closed) return view({ kind: "closed", at: millis(closed.at), discarded: closed.discarded });
   const pid = live.get(rec.spec.sessionId);
   if (pid !== undefined && last?.claimed && !last.facts.settled) {
@@ -204,7 +207,7 @@ export function deriveTask(rec: TaskRecord, live: LiveCooks, now: Millis): TaskV
     if (resumable) return view({ kind: "queued", why: "message" });
     return view({ kind: "idle", run: launchFailure.run, since: launchFailure.at, outcome: { kind: "failed", reason: launchFailure.reason } });
   }
-  const stopped = (run: RunNo | undefined): TaskView => view({ kind: "idle", run, since: millis(lastStop?.at ?? now), outcome: { kind: "stopped" } });
+  const stopped = (run: RunNo | undefined): TaskView => view({ kind: "idle", run, since: millis(lastPause?.at ?? now), outcome: { kind: "stopped" } });
   if (last && (!last.claimed || last.bytes === 0)) return held ? stopped(rec.runs.at(-2)?.n) : view({ kind: "queued", why: "interrupted-launch" });
   if (resumable) return view({ kind: "queued", why: "message" });
   if (!last) return held ? stopped(undefined) : view({ kind: "queued", why: "new" });

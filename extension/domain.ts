@@ -97,6 +97,7 @@ export type TaskSpec = Omit<TaskSpecFile, "id" | "project" | "sessionId" | "crea
 
 export const TaskEventSchema = Type.Union([
   Type.Object({ type: Type.Literal("stop"), at: Type.Number(), run: Type.Number() }, { additionalProperties: false }),
+  Type.Object({ type: Type.Literal("hold"), at: Type.Number(), run: Type.Number() }, { additionalProperties: false }),
   Type.Object({ type: Type.Literal("notified"), at: Type.Number(), run: Type.Number() }, { additionalProperties: false }),
   Type.Object({ type: Type.Literal("launch_failed"), at: Type.Number(), run: Type.Number(), reason: Type.String() }, { additionalProperties: false }),
   Type.Object({ type: Type.Literal("closed"), at: Type.Number(), discarded: Type.Boolean() }, { additionalProperties: false }),

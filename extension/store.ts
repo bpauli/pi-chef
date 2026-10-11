@@ -281,9 +281,11 @@ export class Store {
       const stderrTail = claimed && !facts.settled ? this.tail(this.runErr(id, runNo(n))) : "";
       return { n: runNo(n), claimed, bytes: Math.max(0, bytes), claimedAt, facts, stderrTail };
     });
+    const claimed = new Set(runs.filter((r) => r.claimed).map((r) => r.n));
     return {
       spec,
-      events: this.readEvents(id),
+      // Before `hold` existed, a hold was logged as a `stop` that names a run that was never claimed.
+      events: this.readEvents(id).map((e) => (e.type === "stop" && !claimed.has(runNo(e.run)) ? { ...e, type: "hold" } : e)),
       runs,
       pendingAt: this.pendingMessages(id).map((m) => m.at),
       worktreeExists: existsSync(spec.worktree),

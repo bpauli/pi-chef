@@ -66,7 +66,7 @@ One writer per file. No file is shared by two writers.
 | `pass.lock` | the lease holder | `{pid, pidStart, sessionId, since}`. |
 | `projects/<name>.json` | owner, once | Project spec. |
 | `tasks/<id>/task.json` | owner, once (O_EXCL) | Immutable task spec: project, title, brief, branch, worktree, base branch, session id, model. |
-| `tasks/<id>/log.jsonl` | owner, append | Decisions only: `stop`, `notified`, `launch_failed`, `closed`. |
+| `tasks/<id>/log.jsonl` | owner, append | Decisions only: `stop`, `hold`, `notified`, `launch_failed`, `closed`. |
 | `tasks/<id>/runs/<n>.prompt.md` | owner | Launch intent for run `n`: brief or messages. |
 | `tasks/<id>/runs/<n>.jsonl` | the cook's Pi stdout | Everything the cook did. The owner only creates it empty with O_EXCL. That create is the launch claim. |
 | `tasks/<id>/runs/<n>.err` | the cook's Pi stderr | Diagnostics. Opened for append, so a relaunch of the same run keeps the earlier attempt's output. |
@@ -108,7 +108,7 @@ A launch that produces no output is a failure, not a retry. Three facts derive i
 
 The task derives `idle(failed)` for that run, with the event reason plus the err tail, and the chef gets a wake. The run number is used up: the retry is the next run. A message newer than the failure resumes the task as `queued(message)`. The relaunch prompt is the brief plus the messages when no run has delivered the brief yet (`prompted`: the run file holds a user `message_end`), else only the messages. `chef_dispatch` answers `failed to launch: <reason>` when the first tick fails the launch.
 
-A `stop` event holds a task. A pending message older than the last stop does not relaunch it; the next newer message does, and the relaunch prompt carries every pending message. A message with the same millisecond as the stop counts as newer: the serialized chain wrote the stop first. A held task is `idle(stopped)`.
+`chef_stop` logs `stop {run}` for a cooking run and `hold {run}` for a queued task, where `run` is the run that would launch next. Either event holds the task. A pending message older than the last `stop` or `hold` does not relaunch it; the next newer message does, and the relaunch prompt carries every pending message. A message with the same millisecond as the event counts as newer: the serialized chain wrote the event first. A held task is `idle(stopped)`. Only a `stop` signals the cook of its run and ends that run as `stopped`, so the run that a message resumes after a `hold` runs to its report. Kitchens written before `hold` existed logged a hold as a `stop` that names a run that was never claimed. `loadRecord` reads such a `stop` as a `hold`.
 
 ## Cook identity and liveness
 

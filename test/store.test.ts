@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ChefError, type TaskId, type TaskSpec, millis, parseProjectName, runNo } from "../extension/domain.ts";
-import { EMPTY_RUN } from "../extension/derive.ts";
+import { EMPTY_RUN, deriveTask } from "../extension/derive.ts";
 import { RunTail, RunTails, Store } from "../extension/store.ts";
 
 function withDir(run: (dir: string) => void): void {
@@ -182,6 +182,25 @@ test("loadRecord folds the run files, counts pending messages, and skips a torn 
     assert.equal(rec.worktreeExists, true);
     assert.equal(store.loadRecord(id, tails).runs[0]!.facts.settled, true);
     void fds;
+  });
+});
+
+test("an old kitchen's stop for a run that was never claimed loads as a hold, and a stop for a claimed run stays a stop", () => {
+  withDir((dir) => {
+    const store = new Store(dir);
+    store.createTask(spec(store));
+    store.writePrompt(id, runNo(1), "p1");
+    const fds = store.claimRun(id, runNo(1))!;
+    closeSync(fds.stdout);
+    closeSync(fds.stderr);
+    appendFileSync(store.runFile(id, runNo(1)), line("message_end", { message: { role: "user", timestamp: 1 } }));
+    appendFileSync(join(store.taskDir(id), "log.jsonl"), '{"type":"stop","at":5,"run":1}\n{"type":"stop","at":9,"run":2}\n');
+    const rec = store.loadRecord(id, new RunTails());
+    assert.deepEqual(rec.events, [
+      { type: "stop", at: 5, run: 1 },
+      { type: "hold", at: 9, run: 2 },
+    ]);
+    assert.deepEqual(deriveTask(rec, new Map(), millis(20)).state, { kind: "idle", run: 1, since: 9, outcome: { kind: "stopped" } });
   });
 });
 
