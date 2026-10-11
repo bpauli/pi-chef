@@ -11,6 +11,7 @@ import {
   type Holder,
   type Millis,
   type Notice,
+  type NoticeRef,
   type Pid,
   type Project,
   type RunNo,
@@ -314,7 +315,7 @@ export class Kitchen extends KitchenReader {
   }
 
   /** Marks `notified` for each delivered notice. Called by the shell after the wake is delivered. */
-  markNotified(notices: readonly Notice[]): Promise<void> {
+  markNotified(notices: readonly NoticeRef[]): Promise<void> {
     return this.mutate(async () => {
       for (const n of notices) this.store.appendEvent(n.task, { type: "notified", at: this.now(), run: n.run });
     });

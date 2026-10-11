@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Static, type TSchema, Type } from "typebox";
 import { Value } from "typebox/value";
-import { ChefError, ChefModeEntrySchema, type Millis, type Notice, type Pid, type TaskId, millis, parseTaskId } from "./domain.ts";
+import { ChefError, ChefModeEntrySchema, type Millis, type Notice, type NoticeRef, type Pid, type TaskId, type WakeDetails, WakeDetailsSchema, millis, parseTaskId, runNo } from "./domain.ts";
 import { type RestartNote, boardHeader, boardLines, formatAge, formatWake, outcomeText, plural, stateText, statusText } from "./derive.ts";
 import { piInvocation } from "./cooks.ts";
 import { Kitchen, type KitchenReader, type TaskResult, lostError } from "./kitchen.ts";
@@ -59,13 +59,23 @@ function checked<T extends TSchema>(schema: T, params: unknown): Static<T> {
 
 // ---------- Wake path ----------
 
+const noticeKey = (n: NoticeRef): string => `${n.task}#${n.run}`;
+
 /**
  * Batches notices into one wake. The first notice opens a quiet window that
  * each new notice extends, capped from the first, so ten cooks finishing
  * together cost one chef turn. Dedupe key: task#run.
+ *
+ * A sent wake stays in flight until Pi reports its `message_end`, because a
+ * wake sent mid-turn sits in Pi's follow-up queue, which Escape or an abort
+ * drops. `notified` is written only on that `message_end`. Until then the tick
+ * derives the notice again every second, and the in-flight set keeps it from
+ * being sent twice. When the agent settles with wakes still in flight, Pi
+ * dropped them, so they are released and the next tick sends them again.
  */
 export class Waker {
   private readonly pending = new Map<string, Notice>();
+  private readonly inFlight = new Set<string>();
   private readonly deliver: (notices: Notice[]) => void;
   private readonly timing: { quietMs: number; maxWaitMs: number };
   private readonly clock: Pick<typeof globalThis, "setTimeout" | "clearTimeout">;
@@ -81,8 +91,8 @@ export class Waker {
   offer(notices: readonly Notice[]): void {
     let fresh = false;
     for (const n of notices) {
-      const key = `${n.task}#${n.run}`;
-      if (this.pending.has(key)) continue;
+      const key = noticeKey(n);
+      if (this.pending.has(key) || this.inFlight.has(key)) continue;
       this.pending.set(key, n);
       fresh = true;
     }
@@ -98,7 +108,21 @@ export class Waker {
     this.quiet = this.cap = undefined;
     const notices = [...this.pending.values()];
     this.pending.clear();
+    for (const n of notices) this.inFlight.add(noticeKey(n));
     if (notices.length) this.deliver(notices);
+  }
+
+  /** The wake carrying these notices reached the session. */
+  delivered(notices: readonly NoticeRef[]): void {
+    for (const n of notices) {
+      this.inFlight.delete(noticeKey(n));
+      this.pending.delete(noticeKey(n));
+    }
+  }
+
+  /** The agent settled. A wake still in flight was dropped from Pi's queue and is free to be sent again. */
+  settled(): void {
+    this.inFlight.clear();
   }
 
   /** Drops pending notices without delivering. They are not marked, so the next session derives them again. */
@@ -107,6 +131,7 @@ export class Waker {
     if (this.cap) this.clock.clearTimeout(this.cap);
     this.quiet = this.cap = undefined;
     this.pending.clear();
+    this.inFlight.clear();
   }
 }
 
@@ -164,9 +189,9 @@ export function installChef(pi: ExtensionAPI): void {
     current.timer.unref();
     if (owner) {
       current.waker = new Waker((notices) => {
-        pi.sendMessage({ customType: "chef-wake", content: formatWake(notices, current.restart), display: true, details: { notices } }, { triggerTurn: true, deliverAs: "followUp" });
+        const details: WakeDetails = { notices };
+        pi.sendMessage({ customType: "chef-wake", content: formatWake(notices, current.restart), display: true, details }, { triggerTurn: true, deliverAs: "followUp" });
         current.restart = undefined;
-        void owner.markNotified(notices).catch(() => undefined);
       });
     }
     session = current;
@@ -191,7 +216,7 @@ export function installChef(pi: ExtensionAPI): void {
           if (ctx.hasUI) ctx.ui.notify(lostError(report.holder).message, "warning");
           board = await s.reader.board();
         } else {
-          if (s.firstTick && report.board.open.length) s.restart = { cooking: report.board.cooks.busy, finished: report.notices.length };
+          if (s.firstTick && report.notices.length) s.restart = { cooking: report.board.cooks.busy, finished: report.notices.length };
           s.waker?.offer(report.notices);
           for (const err of report.errors) {
             if (s.shown.has(err)) continue;
@@ -238,6 +263,17 @@ export function installChef(pi: ExtensionAPI): void {
     if (pi.getFlag("chef") === true || chefModeOn(ctx)) await open(ctx);
   });
   pi.on("session_shutdown", () => close(undefined));
+  // The wake reached the session: now the notices count as delivered.
+  pi.on("message_end", (event) => {
+    const m = event.message;
+    const s = session;
+    if (m.role !== "custom" || m.customType !== "chef-wake" || !s?.owner || !s.waker) return;
+    if (!Value.Check(WakeDetailsSchema, m.details)) return;
+    const notices: NoticeRef[] = m.details.notices.map((n) => ({ task: n.task as TaskId, run: runNo(n.run) }));
+    s.waker.delivered(notices);
+    void s.owner.markNotified(notices).catch(() => undefined);
+  });
+  pi.on("agent_settled", () => session?.waker?.settled());
 
   const reader = (): KitchenReader => {
     if (!session) throw new ChefError("Chef mode is off. Run /chef, or start pi with --chef.");

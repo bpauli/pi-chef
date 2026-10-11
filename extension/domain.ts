@@ -142,6 +142,16 @@ export type Lease = Static<typeof LeaseSchema>;
 /** The `chef-mode` session entry that turns chef mode on again on resume. */
 export const ChefModeEntrySchema = Type.Object({ on: Type.Boolean() });
 
+/** The `details` of a `chef-wake` message: which runs it told the chef about. Read back on its `message_end`. */
+export const WakeDetailsSchema = Type.Object({ notices: Type.Array(Type.Object({ task: Type.String(), run: Type.Number() })) });
+export interface NoticeRef {
+  task: TaskId;
+  run: RunNo;
+}
+export interface WakeDetails {
+  notices: NoticeRef[];
+}
+
 // ---------- Persisted: written by the cook's Pi ----------
 
 /**

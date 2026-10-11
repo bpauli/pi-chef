@@ -151,7 +151,9 @@ A notice is due when a task is idle with a final outcome other than `stopped`, i
 pi.sendMessage({ customType: "chef-wake", content, display: true, details }, { triggerTurn: true, deliverAs: "followUp" });
 ```
 
-The owner appends `notified` for each run only after `sendMessage` returns. A crash in between repeats a notice. It never loses one.
+`sendMessage` is not delivery. While the chef is mid-turn, Pi holds the message in its follow-up queue, and Escape, an abort, or quitting Pi drops it. The owner appends `notified` for each run only in the `message_end` handler for the `chef-wake` message, which reads the runs back from `details`. Until then the tick derives the notice again every second, and the `Waker` keeps the sent notices in an in-flight set so they are not sent twice. When `agent_settled` fires with wakes still in flight, Pi dropped them: the set is cleared and the next tick sends them again. A crash in between repeats a notice. It never loses one.
+
+The restart prefix is set only when the first tick has notices, and cleared after that wake is sent.
 
 ## Lease and session roles
 
