@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { after, afterEach, before, test } from "node:test";
 import { ChefError, type Notice, type Pid, type SessionId, type TaskId, millis, parseProjectName, runNo } from "../extension/domain.ts";
 import { alive, runsSession, scanCooks, signalCook } from "../extension/cooks.ts";
-import { Kitchen, KitchenReader, type Opened } from "../extension/kitchen.ts";
+import { Kitchen, type KitchenDeps, KitchenReader, type Opened } from "../extension/kitchen.ts";
 import { Store } from "../extension/store.ts";
 import { CHEF_ENTRY, COMMIT_STEP, FAKE_PROVIDER, PI_CLI, REPORT_STEP, SLOW_EXIT, type TempKitchen, git, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
 
@@ -34,16 +34,16 @@ async function reapCooks(store: Store): Promise<void> {
 const self = (sessionId = "chef-test") => ({ pid: process.pid as Pid, sessionId });
 const pi = { command: process.execPath, args: [PI_CLI] };
 
-async function openOwner(sessionId = "chef-test", takeover = false): Promise<Kitchen> {
-  const opened = await Kitchen.open({ store: new Store(tk.kitchenDir), pi, chefEntry: CHEF_ENTRY, self: self(sessionId), killGraceMs: 2000 }, { takeover });
+async function openOwner(sessionId = "chef-test", takeover = false, deps: Partial<KitchenDeps> = {}): Promise<Kitchen> {
+  const opened = await Kitchen.open({ store: new Store(tk.kitchenDir), pi, chefEntry: CHEF_ENTRY, self: self(sessionId), killGraceMs: 2000, ...deps }, { takeover });
   assert.equal(opened.kind, "owner");
   return (opened as Extract<Opened, { kind: "owner" }>).kitchen;
 }
 
-async function setup(config: Record<string, unknown> = {}): Promise<{ kitchen: Kitchen; store: Store; repos: { api: string; web: string } }> {
+async function setup(config: Record<string, unknown> = {}, deps: Partial<KitchenDeps> = {}): Promise<{ kitchen: Kitchen; store: Store; repos: { api: string; web: string } }> {
   tk = tempKitchen(config);
   const repos = { api: makeRepo(tk.home, "api"), web: makeRepo(tk.home, "web") };
-  const kitchen = await openOwner();
+  const kitchen = await openOwner("chef-test", false, deps);
   await kitchen.addProject({ path: repos.api, note: "api service" });
   await kitchen.addProject({ path: join(repos.web, "."), name: "web" });
   return { kitchen, store: new Store(tk.kitchenDir), repos };
@@ -141,6 +141,20 @@ test("send to a cook that reported and is still exiting waits for the exit and r
   assert.deepEqual(n2.outcome, { kind: "done", summary: "used cookies", reported: true });
   assert.equal(n2.run, 2);
   assert.deepEqual(store.pendingMessages(view.spec.id), []);
+});
+
+test("send gives up waiting for a slow exit after exitWaitMs and reports exiting, and the tick relaunches once the cook is gone", async () => {
+  const { kitchen, store } = await setup({ cookArgs: ["-e", FAKE_PROVIDER, "-e", SLOW_EXIT] }, { exitWaitMs: 200 });
+  const brief = [REPORT_STEP("needs_decision", "cookie or bearer token?"), REPORT_STEP("done", "used cookies")].join("\n");
+  const view = await kitchen.dispatch({ project: "api", title: "Fix login", brief });
+  await waitNotice(kitchen, view.spec.id);
+
+  const delivery = await kitchen.send(view.spec.id, "use cookies");
+  assert.deepEqual(delivery, { kind: "exiting" });
+  assert.equal(existsSync(store.runFile(view.spec.id, runNo(2))), false);
+  const n2 = await waitNotice(kitchen, view.spec.id);
+  assert.deepEqual(n2.outcome, { kind: "done", summary: "used cookies", reported: true });
+  assert.equal(n2.run, 2);
 });
 
 test("a message sent while the cook runs is steered into the same run and no second run starts", async () => {

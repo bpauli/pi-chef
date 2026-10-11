@@ -4,6 +4,7 @@
 
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   type Board,
   ChefError,
@@ -19,7 +20,7 @@ import {
   millis,
   parseProjectName,
 } from "./domain.ts";
-import { type Action, type GitFacts, type LiveCooks, type TaskRecord, closeVerdict, nextRunOf, plan } from "./derive.ts";
+import { type Action, type GitFacts, type LiveCooks, type TaskRecord, closeVerdict, deriveTask, nextRunOf, plan } from "./derive.ts";
 import { CookTable, type PiInvocation, firstPrompt, followUpPrompt, launchCook, messagesSection, pidStart, signalCook } from "./cooks.ts";
 import { diffstat, ensureWorktree, gitFacts, inspectRepo, removeWorktree } from "./git.ts";
 import { RunTails, type Store } from "./store.ts";
@@ -32,7 +33,11 @@ export interface KitchenDeps {
   self: { pid: Pid; sessionId: string };
   now?: () => Millis;
   killGraceMs?: number;
+  /** How long `send` waits for a reported cook to exit before it answers `exiting`. Default 5000. */
+  exitWaitMs?: number;
 }
+
+const EXIT_POLL_MS = 100;
 
 export interface DispatchInput {
   project: string;
@@ -45,6 +50,8 @@ export type Delivery =
   | { kind: "steer" }
   | { kind: "relaunched"; run: RunNo }
   | { kind: "queued"; position: number }
+  /** The last cook reported and has not exited within `exitWaitMs`. The tick relaunches when it does. */
+  | { kind: "exiting" }
   | { kind: "held" };
 
 export interface TaskResult {
@@ -210,22 +217,33 @@ export class Kitchen extends KitchenReader {
     return this.viewAfterTick(id);
   }
 
-  /** One way to talk to a task: steer if live, relaunch with the message if idle. */
+  /**
+   * One way to talk to a task: steer if cooking, relaunch with the message if idle.
+   * A cook that reported and is still exiting blocks the relaunch (plan waits for
+   * the exit), so send ticks until the exit or `exitWaitMs`, and never reads that
+   * wait as the cap holding the task.
+   */
   async send(task: TaskId, text: string): Promise<Delivery> {
     const rec = this.store.loadRecord(task, this.tails);
     if (rec.events.some((e) => e.type === "closed")) throw new ChefError(`${task} is closed. Dispatch a new task.`);
-    const wasLive = (await this.cooks.live()).has(rec.spec.sessionId);
+    const before = deriveTask(rec, await this.liveCooks([rec]), this.now()).state;
     this.store.postMessage(task, text, this.now());
-    const report = await this.tick();
-    if (report.kind === "lost") throw lostError(report.holder);
-    const view = report.board.open.find((v) => v.spec.id === task);
-    const state = view?.state;
-    if (state?.kind === "cooking") return wasLive ? { kind: "steer" } : { kind: "relaunched", run: state.run };
-    if (state?.kind === "queued") {
-      const queue = report.board.open.filter((v) => v.state.kind === "queued").sort((a, b) => a.spec.createdAt - b.spec.createdAt);
-      return { kind: "queued", position: queue.findIndex((v) => v.spec.id === task) + 1 };
+    const deadline = this.now() + (this.deps.exitWaitMs ?? 5000);
+    for (;;) {
+      const report = await this.tick();
+      if (report.kind === "lost") throw lostError(report.holder);
+      const state = report.board.open.find((v) => v.spec.id === task)?.state;
+      if (state?.kind === "cooking") {
+        return before.kind === "cooking" && before.run === state.run ? { kind: "steer" } : { kind: "relaunched", run: state.run };
+      }
+      if (state?.kind !== "queued") return { kind: "held" };
+      if (!(await this.cooks.live()).has(rec.spec.sessionId)) {
+        const queue = report.board.open.filter((v) => v.state.kind === "queued").sort((a, b) => a.spec.createdAt - b.spec.createdAt);
+        return { kind: "queued", position: queue.findIndex((v) => v.spec.id === task) + 1 };
+      }
+      if (this.now() >= deadline) return { kind: "exiting" };
+      await sleep(EXIT_POLL_MS);
     }
-    return { kind: "held" };
   }
 
   /** Stops the live run, or holds a queued task. The tick escalates to SIGKILL. */

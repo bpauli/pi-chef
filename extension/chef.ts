@@ -319,6 +319,8 @@ export function installChef(pi: ExtensionAPI): void {
           return text(`${id} restarted (run ${d.run}) with your message.`);
         case "queued":
           return text(`${id} restarts with your message when a cook frees up (position ${d.position}).`);
+        case "exiting":
+          return text(`${id} holds your message. Its last cook reported and is still exiting. chef restarts ${id} with your message as soon as it has exited.`);
         case "held":
           return text(`${id} holds your message. It is stopped; send again to resume it.`);
       }

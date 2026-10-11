@@ -47,7 +47,7 @@ All tools are registered with `defaultActive: false` and `exposure: "model-only"
 | `chef_add_project` | `path`, `name?`, `note?`, `baseBranch?` | Registers a git repo. The name defaults to the directory name. The base branch defaults to the current branch of the repo. |
 | `chef_dispatch` | `project`, `title`, `brief`, `model?` | Creates a task and launches a cook, or queues it behind the cap. |
 | `chef_board` | none | Projects, open tasks with state and activity, cook count. |
-| `chef_send` | `task`, `message` | One verb for steer, answer, and resume. Cooking: the cook takes it after its current tool call. Idle: the task relaunches on the same session with the message. |
+| `chef_send` | `task`, `message` | One verb for steer, answer, and resume. Cooking: the cook takes it after its current tool call. Idle: the task relaunches on the same session with the message. A cook that reported and is still exiting blocks the relaunch, so `send` ticks until the exit (bounded by `exitWaitMs`, default 5 s) and reports the new run. It reports `queued` only when the cook cap holds the task. |
 | `chef_stop` | `task` | Stops a cooking cook (process group SIGTERM, SIGKILL after a grace period), or holds a queued task. The worktree stays. |
 | `chef_result` | `task` | Outcome, summary, branch, commits ahead of base, landed or not, worktree clean or dirty, diffstat, file pointers. |
 | `chef_close` | `task`, `discard?` | Removes the worktree and closes the task. Refuses dirty or unlanded work unless `discard: true`. |
