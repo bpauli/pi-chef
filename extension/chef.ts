@@ -26,7 +26,7 @@ export const CHEF_TOOLS = ["chef_add_project", "chef_dispatch", "chef_board", "c
 const AddProjectParams = Type.Object(
   {
     path: Type.String({ description: "Path to a git repository, any directory inside it." }),
-    name: Type.Optional(Type.String({ description: "Short name: a-z, 0-9, dashes. Default: the repository directory name." })),
+    name: Type.Optional(Type.String({ description: "Short name: a-z, 0-9, dashes. Default: the repository directory name, lowercased, with other characters turned into dashes." })),
     note: Type.Optional(Type.String({ description: "One line every cook of this project reads, for example how to run the tests." })),
     baseBranch: Type.Optional(Type.String({ description: "Branch tasks fork from. Default: the current branch of the repository." })),
   },

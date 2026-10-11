@@ -22,6 +22,7 @@ import {
   millis,
   parseModel,
   parseProjectName,
+  slugProjectName,
 } from "./domain.ts";
 import { type Action, type GitFacts, type LiveCooks, type PlanInput, type TaskRecord, closeVerdict, deriveTask, nextRunOf, plan, queuePosition, stateText } from "./derive.ts";
 import { type CookEnd, CookTable, type PiInvocation, firstPrompt, followUpPrompt, launchCook, messagesSection, pidStart, signalCook } from "./cooks.ts";
@@ -244,7 +245,7 @@ export class Kitchen extends KitchenReader {
   addProject(input: { path: string; name?: string; note?: string; baseBranch?: string }): Promise<Project> {
     return this.mutate(async () => {
       const { root, baseBranch } = await inspectRepo(input.path.replace(/^~(?=$|\/)/, process.env.HOME ?? "~"));
-      const name = parseProjectName(input.name ?? basename(root));
+      const name = input.name === undefined ? slugProjectName(basename(root)) : parseProjectName(input.name);
       if (input.baseBranch !== undefined) await verifyBaseBranch(root, input.baseBranch);
       return this.store.addProject({ name, path: root, baseBranch: input.baseBranch ?? baseBranch, note: input.note, addedAt: this.now() });
     });

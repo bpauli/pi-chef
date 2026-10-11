@@ -45,6 +45,20 @@ export function parseModel(raw: string): string {
   return model;
 }
 
+/** Derives a project name from a directory name. An explicit name goes through parseProjectName unchanged. */
+export function slugProjectName(raw: string): ProjectName {
+  const slug = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32)
+    .replace(/-+$/, "");
+  if (!slug) {
+    throw new ChefError(`Cannot derive a project name from "${raw}". Pass an explicit name: lowercase letters, digits, and dashes, 1 to 32 characters.`);
+  }
+  return parseProjectName(slug);
+}
+
 export const TASK_ID = /^([a-z0-9][a-z0-9-]*)-(\d+)$/;
 
 /** Accepts `api-7`, ` API-7 `, and a bare `7` when exactly one known task has that sequence. */

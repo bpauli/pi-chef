@@ -10,6 +10,7 @@ import {
   type TaskSpec,
   millis,
   parseProjectName,
+  slugProjectName,
   parseTaskId,
   runNo,
 } from "../extension/domain.ts";
@@ -80,6 +81,20 @@ test("parseProjectName lowercases and refuses names outside the slug rule", () =
   assert.equal(parseProjectName(" Api "), "api");
   assert.throws(() => parseProjectName("my repo"), ChefError);
   assert.throws(() => parseProjectName("-x"), ChefError);
+});
+
+test("slugProjectName turns a directory name into a valid project name", () => {
+  assert.equal(slugProjectName("My.Project_x"), "my-project-x");
+  assert.equal(slugProjectName("tmp.ZSGhcQVGPd"), "tmp-zsghcqvgpd");
+  assert.equal(slugProjectName("foo_bar"), "foo-bar");
+  assert.equal(slugProjectName("--a..b--"), "a-b");
+  assert.equal(slugProjectName("a".repeat(31) + ".bcd"), "a".repeat(31));
+  assert.equal(slugProjectName("a".repeat(40)), "a".repeat(32));
+});
+
+test("slugProjectName refuses a name with no letters or digits and asks for an explicit name", () => {
+  assert.throws(() => slugProjectName("..."), (e) => e instanceof ChefError && /explicit name/.test(e.message));
+  assert.throws(() => slugProjectName("\u00e4\u00f6"), ChefError);
 });
 
 // ---- foldRunLine over recorded Pi streams ----

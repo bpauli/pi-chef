@@ -73,6 +73,14 @@ async function waitState(kitchen: Kitchen, task: string, kind: string, timeoutMs
 
 const runFiles = (store: Store, task: string) => readdirSync(join(store.taskDir(task as TaskId), "runs")).sort();
 
+test("addProject without a name slugifies the repository directory name", async () => {
+  tk = tempKitchen();
+  const kitchen = await openOwner();
+  const project = await kitchen.addProject({ path: makeRepo(tk.home, "My.Project_x") });
+  assert.equal(project.name, "my-project-x");
+  await assert.rejects(kitchen.addProject({ path: makeRepo(tk.home, "My Repo"), name: "My Repo" }), ChefError);
+});
+
 test("dispatch to two projects: each cook commits and reports done, one notice per task, and the result shows one unlanded commit", async () => {
   const { kitchen, store, repos } = await setup();
   const brief = (f: string) => `Intent: add ${f}.\n${COMMIT_STEP(f)}\n${REPORT_STEP("done", `added ${f}`)}`;
