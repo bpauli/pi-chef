@@ -94,6 +94,22 @@ test("a recorded run that ends with chef_report done yields the report, the star
   assert.equal(facts.turns, 2);
 });
 
+test("a run's start time is its first timestamped message, not the session header that a relaunch repeats", () => {
+  const sessionCreated = Date.parse("2026-01-01T00:00:00.000Z");
+  const relaunchedAt = sessionCreated + 3_600_000;
+  const lines = [
+    JSON.stringify({ type: "session", version: 3, id: "x", timestamp: "2026-01-01T00:00:00.000Z", cwd: "/" }),
+    JSON.stringify({ type: "agent_start" }),
+    JSON.stringify({ type: "turn_start" }),
+    JSON.stringify({ type: "message_end", message: { role: "user", content: [{ type: "text", text: "go" }], timestamp: relaunchedAt } }),
+    JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "ok" }], timestamp: relaunchedAt + 500 } }),
+  ];
+  const facts = foldAll(lines);
+  assert.equal(facts.startedAt, relaunchedAt);
+  assert.equal(facts.lastAt, relaunchedAt + 500);
+  assert.equal(foldAll(lines.slice(0, 3)).startedAt, undefined, "no message yet, no start time");
+});
+
 test("a recorded needs_decision report is read from the tool_execution_end structuredContent", () => {
   const facts = foldAll(fixture("needs-decision"));
   assert.deepEqual(facts.report, { status: "needs_decision", summary: "cookie or bearer token?" });

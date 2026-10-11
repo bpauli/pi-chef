@@ -494,6 +494,20 @@ test("a second session opens read-only and cannot dispatch; takeover moves the l
   await assert.rejects(kitchen.dispatch({ project: "api", title: "x", brief: "y" }), /takeover/);
 });
 
+test("a read-only session promotes itself once the lease is free, and not while another owner holds it", async () => {
+  const { kitchen } = await setup();
+  const other = await Kitchen.open({ store: new Store(tk.kitchenDir), pi, chefEntry: CHEF_ENTRY, self: self("chef-other") });
+  assert.equal(other.kind, "read-only");
+  if (other.kind !== "read-only") return;
+  assert.equal(await other.reader.promote(), undefined, "the owner is alive, so the reader stays read-only");
+  kitchen.release();
+  const promoted = await other.reader.promote();
+  assert.ok(promoted instanceof Kitchen);
+  assert.equal((await promoted.tick()).kind, "ok");
+  assert.equal(new Store(tk.kitchenDir).readLease()?.sessionId, "chef-other");
+  assert.equal((await kitchen.tick()).kind, "lost");
+});
+
 test("a stale lease from a dead pid or a reused pid is replaced", async () => {
   tk = tempKitchen();
   const store = new Store(tk.kitchenDir);
