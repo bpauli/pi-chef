@@ -374,3 +374,17 @@ test("a stale lease from a dead pid or a reused pid is replaced", async () => {
   assert.equal(store.readLease()?.sessionId, "newer");
   mkdirSync(join(tk.home, "unused"));
 });
+
+test("after a takeover the old owner's send, stop, dispatch, and addProject are refused before they write anything", async () => {
+  const { kitchen, store, repos } = await setup();
+  const view = await kitchen.dispatch({ project: "api", title: "Long", brief: "STEP bash: sleep 60" });
+  await openOwner("chef-other", true);
+  await assert.rejects(kitchen.send(view.spec.id, "x"), /takeover/);
+  assert.deepEqual(store.pendingMessages(view.spec.id), []);
+  await assert.rejects(kitchen.stop(view.spec.id), /takeover/);
+  assert.deepEqual(store.readEvents(view.spec.id), []);
+  await assert.rejects(kitchen.dispatch({ project: "api", title: "x", brief: "y" }), /takeover/);
+  assert.deepEqual(store.listTaskIds(), [view.spec.id]);
+  await assert.rejects(kitchen.addProject({ path: repos.web, name: "web2" }), /takeover/);
+  assert.equal(store.readProject(parseProjectName("web2")), undefined);
+});
