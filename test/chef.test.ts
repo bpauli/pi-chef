@@ -4,6 +4,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { after, afterEach, before, test } from "node:test";
+import { TICK_MS, WAKE_TIMING } from "../extension/chef.ts";
 import { scanCooks, signalCook } from "../extension/cooks.ts";
 import { Store } from "../extension/store.ts";
 import { CHEF_ENTRY, COMMIT_STEP, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, type TempKitchen, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
@@ -159,7 +160,7 @@ test("a wake queued behind a busy chef turn is delivered as a follow-up and mark
 
 test("a wake that Pi drops from its queue before delivery is derived and sent again after the turn settles", async () => {
   const { chef, store } = await chefBusyWhileCookFinishes(20);
-  await new Promise((ok) => setTimeout(ok, 7000));
+  await new Promise((ok) => setTimeout(ok, WAKE_TIMING.maxWaitMs + 2 * TICK_MS));
   chef.proc.stdin!.write(`${JSON.stringify({ id: "c1", type: "clear_queue" })}\n`);
   await until("the chef's turn to settle", () => (settles(chef.events) >= 1 ? true : undefined), 60_000);
   const firstSettle = chef.events.findIndex((e) => e.type === "agent_settled");

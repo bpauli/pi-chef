@@ -97,6 +97,15 @@ interface Marked {
   sessionId: string;
 }
 
+// proc(5) numbers the stat fields from 1. These index the fields after "(comm) ", which start at field 3.
+const STAT_PPID = 4 - 3;
+const STAT_STARTTIME = 22 - 3;
+
+function statFields(pid: number): string[] {
+  const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+  return stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+}
+
 async function scanMarked(): Promise<Marked[]> {
   const found: Marked[] = [];
   const take = (pid: number, ppid: number, env: readonly string[]) => {
@@ -108,9 +117,7 @@ async function scanMarked(): Promise<Marked[]> {
       const pid = Number(name);
       if (!Number.isInteger(pid) || pid <= 0) continue;
       try {
-        const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-        const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
-        take(pid, ppid, readFileSync(`/proc/${pid}/environ`, "utf8").split("\0"));
+        take(pid, Number(statFields(pid)[STAT_PPID]), readFileSync(`/proc/${pid}/environ`, "utf8").split("\0"));
       } catch {}
     }
     return found;
@@ -133,9 +140,7 @@ export async function pidStart(pid: number): Promise<string | undefined> {
   if (!alive(pid)) return undefined;
   if (process.platform === "linux") {
     try {
-      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-      return fields[19];
+      return statFields(pid)[STAT_STARTTIME];
     } catch {
       return undefined;
     }

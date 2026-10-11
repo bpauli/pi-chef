@@ -10,7 +10,8 @@ import { piInvocation } from "./cooks.ts";
 import { Kitchen, type KitchenReader, type TaskResult, lostError } from "./kitchen.ts";
 import { Store, kitchenDir } from "./store.ts";
 
-const TICK_MS = 1000;
+export const TICK_MS = 1000;
+export const WAKE_TIMING = { quietMs: 1500, maxWaitMs: 5000 };
 const WIDGET_WIDTH = 120;
 const BOARD_WIDTH = 160;
 const CHEF_ENTRY = fileURLToPath(new URL("./index.ts", import.meta.url));
@@ -65,7 +66,7 @@ export class Waker {
   private quiet: ReturnType<typeof setTimeout> | undefined;
   private cap: ReturnType<typeof setTimeout> | undefined;
 
-  constructor(deliver: (notices: Notice[]) => void, timing = { quietMs: 1500, maxWaitMs: 5000 }, clock: Pick<typeof globalThis, "setTimeout" | "clearTimeout"> = globalThis) {
+  constructor(deliver: (notices: Notice[]) => void, timing = WAKE_TIMING, clock: Pick<typeof globalThis, "setTimeout" | "clearTimeout"> = globalThis) {
     this.deliver = deliver;
     this.timing = timing;
     this.clock = clock;
@@ -439,10 +440,16 @@ async function boardText(reader: KitchenReader): Promise<string> {
 }
 
 const RESULT_MAX = 4000;
+const BODY_MIN = 200;
+const BODY_MAX = 2000;
+const DIFFSTAT_RESERVE = 400;
+const PART_BREAKS = 4;
+const CUT_MARK = " [cut]";
+const CUT_MIN = 20;
 
 function cut(text: string, max: number): string {
   if (text.length <= max) return text;
-  return max < 20 ? "" : `${text.slice(0, max - 6)} [cut]`;
+  return max < CUT_MIN ? "" : `${text.slice(0, max - CUT_MARK.length)}${CUT_MARK}`;
 }
 
 export function resultText(r: TaskResult, at: Millis): string {
@@ -466,8 +473,8 @@ export function resultText(r: TaskResult, at: Millis): string {
     where = `Worktree ${spec.worktree} is gone. Branch ${spec.branch} may still exist in ${r.project?.path ?? "the repository"}.`;
   }
   const transcript = r.transcript ? `Transcript: ${r.transcript}` : "";
-  const fixed = head.length + where.length + transcript.length + 4;
-  const bodyText = cut(body, Math.max(200, Math.min(2000, RESULT_MAX - fixed - 400)));
+  const fixed = head.length + where.length + transcript.length + PART_BREAKS;
+  const bodyText = cut(body, Math.max(BODY_MIN, Math.min(BODY_MAX, RESULT_MAX - fixed - DIFFSTAT_RESERVE)));
   const diffText = cut(r.git ? r.diffstat : "", Math.max(0, RESULT_MAX - fixed - bodyText.length - 1));
   return [head, bodyText, where, diffText, transcript].filter(Boolean).join("\n");
 }

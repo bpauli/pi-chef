@@ -38,6 +38,7 @@ export interface KitchenDeps {
 }
 
 const EXIT_POLL_MS = 100;
+const DEFAULT_TIMING = { killGraceMs: 5000, exitGraceMs: 10_000, reclaimAfterMs: 30_000, exitWaitMs: 5000 };
 
 export interface DispatchInput {
   project: string;
@@ -165,9 +166,9 @@ export class KitchenReader {
       live,
       now: this.now(),
       cap,
-      killGraceMs: this.deps.killGraceMs ?? 5000,
-      exitGraceMs: this.deps.exitGraceMs ?? 10_000,
-      reclaimAfterMs: this.deps.reclaimAfterMs ?? 30_000,
+      killGraceMs: this.deps.killGraceMs ?? DEFAULT_TIMING.killGraceMs,
+      exitGraceMs: this.deps.exitGraceMs ?? DEFAULT_TIMING.exitGraceMs,
+      reclaimAfterMs: this.deps.reclaimAfterMs ?? DEFAULT_TIMING.reclaimAfterMs,
     };
   }
 
@@ -250,7 +251,7 @@ export class Kitchen extends KitchenReader {
       const rec = this.store.loadRecord(task, this.tails);
       if (rec.events.some((e) => e.type === "closed")) throw new ChefError(`${task} is closed. Dispatch a new task.`);
       this.store.postMessage(task, text, this.now());
-      const deadline = this.now() + (this.deps.exitWaitMs ?? 5000);
+      const deadline = this.now() + (this.deps.exitWaitMs ?? DEFAULT_TIMING.exitWaitMs);
       for (;;) {
         const report = await this.runTick();
         if (report.kind === "lost") throw lostError(report.holder);
