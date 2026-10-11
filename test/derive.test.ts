@@ -85,10 +85,12 @@ test("parseProjectName lowercases and refuses names outside the slug rule", () =
 // ---- foldRunLine over recorded Pi streams ----
 
 test("a recorded run that ends with chef_report done yields the report, the start time, and settled", () => {
-  const facts = foldAll(fixture("done"));
+  const lines = fixture("done");
+  const facts = foldAll(lines);
   assert.deepEqual(facts.report, { status: "done", summary: "echoed hello" });
   assert.equal(facts.settled, true);
-  assert.equal(facts.startedAt, Date.parse("2026-10-10T20:33:12.057Z"));
+  const header = JSON.parse(lines[0]!) as { timestamp: string };
+  assert.equal(facts.startedAt, Date.parse(header.timestamp));
   assert.equal(facts.turns, 2);
 });
 

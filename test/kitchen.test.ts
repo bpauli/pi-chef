@@ -142,6 +142,17 @@ test("a message sent while the cook runs is steered into the same run and no sec
   assert.equal(readdirSync(join(store.inboxDir(view.spec.id), "handled")).length, 1);
 });
 
+test("the cook's model receives the cook contract in its system prompt", async () => {
+  const { kitchen } = await setup();
+  const view = await kitchen.dispatch({ project: "api", title: "Who am I", brief: "STEP echo-system:" });
+  const notice = await waitNotice(kitchen, view.spec.id);
+  assert.equal(notice.outcome.kind, "done");
+  const summary = notice.outcome.kind === "done" ? notice.outcome.summary : "";
+  assert.match(summary, /You are a cook in chef's kitchen: a Pi agent that works alone on task api-1 "Who am I"/);
+  assert.match(summary, /End every run with exactly one chef_report call/);
+  assert.match(summary, /chef_report/);
+});
+
 test("stop ends a running cook as stopped with no notice, and chef_send resumes it on run 2", async () => {
   const { kitchen, store } = await setup();
   const view = await kitchen.dispatch({ project: "api", title: "Long", brief: `STEP bash: sleep 60\n${REPORT_STEP("done", "resumed")}` });

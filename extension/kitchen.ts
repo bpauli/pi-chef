@@ -96,6 +96,11 @@ export class KitchenReader {
     return this.store.listTaskIds();
   }
 
+  /** The session that holds the lease now, from pass.lock. */
+  holder(): Holder | undefined {
+    return holderOf(this.store.readLease());
+  }
+
   async board(): Promise<Board> {
     const records = this.loadRecords();
     const live = await this.liveCooks(records);

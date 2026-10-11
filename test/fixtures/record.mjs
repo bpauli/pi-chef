@@ -1,13 +1,14 @@
-// Records real Pi 1.0.3 JSONL streams on the fake model as fold fixtures.
-// Usage: node test/fixtures/record.mjs [extension path, default test/fixtures/report-tool.ts]
+// Records real Pi 1.0.3 JSONL streams on the fake model as fold fixtures. The
+// cook runs the real cook role (extension/index.ts with CHEF_ROLE=cook) on a
+// temp task dir. Usage: node test/fixtures/record.mjs
 import { spawn } from "node:child_process";
-import { closeSync, mkdtempSync, openSync, rmSync } from "node:fs";
+import { closeSync, mkdirSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..", "..");
 const pi = join(root, "node_modules/@earendil-works/pi-coding-agent/dist/cli.js");
-const reportExt = resolve(process.argv[2] ?? join(root, "test/fixtures/report-tool.ts"));
+const entry = join(root, "extension/index.ts");
 const provider = join(root, "test/fake-model/provider.ts");
 
 const scripts = {
@@ -21,18 +22,22 @@ const server = spawn(process.execPath, [join(root, "test/fake-model/server.mjs")
 const port = await new Promise((ok) => server.stdout.once("data", (d) => ok(String(d).trim())));
 
 for (const [name, script] of Object.entries(scripts)) {
-  const agentDir = mkdtempSync(join(tmpdir(), "chef-record-"));
+  const home = mkdtempSync(join(tmpdir(), "chef-record-"));
+  const taskDir = join(home, "task");
+  mkdirSync(join(taskDir, "inbox", "handled"), { recursive: true });
+  const spec = { id: "api-1", project: "api", title: "record", brief: script, branch: "chef/api-1", worktree: home, baseBranch: "main", sessionId: `record-${name}`, createdAt: Date.now() };
+  writeFileSync(join(taskDir, "task.json"), JSON.stringify(spec));
   const out = openSync(join(root, "test/fixtures", `${name}.jsonl`), "w");
   const fakePort = name === "provider-error" ? "1" : port;
-  const args = [pi, "--mode", "json", "-p", "--no-session", "-ne", "-e", provider, "-e", reportExt, "--model", "fake/scripted", script];
+  const args = [pi, "--mode", "json", "-p", "--no-session", "-ne", "-e", provider, "-e", entry, "--model", "fake/scripted", script];
   const child = spawn(process.execPath, args, {
     stdio: ["ignore", out, "inherit"],
-    env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, FAKE_MODEL_PORT: fakePort, CHEF_ROLE: "cook", CHEF_TASK_DIR: process.env.CHEF_TASK_DIR ?? "" },
-    cwd: agentDir,
+    env: { ...process.env, PI_CODING_AGENT_DIR: join(home, "agent"), FAKE_MODEL_PORT: fakePort, CHEF_ROLE: "cook", CHEF_TASK_DIR: taskDir, CHEF_SESSION_ID: spec.sessionId },
+    cwd: home,
   });
   const code = await new Promise((ok) => child.on("exit", ok));
   closeSync(out);
-  rmSync(agentDir, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
   console.log(`${name}: exit ${code}`);
 }
 server.kill();

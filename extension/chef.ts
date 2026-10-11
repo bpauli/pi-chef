@@ -1,0 +1,428 @@
+// Chef role: the Pi shell around the Kitchen. Tools as one-call adapters, the
+// /chef command, the board widget, the Waker, and activation. Logic stays in
+// kitchen.ts and derive.ts; this file maps Pi in and text out.
+
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { type Static, type TSchema, Type } from "typebox";
+import { Value } from "typebox/value";
+import { ChefError, ChefModeEntrySchema, type Millis, type Notice, type Pid, type TaskId, millis, parseTaskId } from "./domain.ts";
+import { type RestartNote, boardHeader, boardLines, formatAge, formatWake, outcomeText, plural, stateText, statusText } from "./derive.ts";
+import { piInvocation } from "./cooks.ts";
+import { Kitchen, type KitchenReader, type TaskResult, lostError } from "./kitchen.ts";
+import { Store, kitchenDir } from "./store.ts";
+
+const TICK_MS = 1000;
+const WIDGET_WIDTH = 120;
+const BOARD_WIDTH = 160;
+const CHEF_ENTRY = fileURLToPath(new URL("./index.ts", import.meta.url));
+
+export const CHEF_TOOLS = ["chef_add_project", "chef_dispatch", "chef_board", "chef_send", "chef_stop", "chef_result", "chef_close"] as const;
+
+// ---------- Tool parameters ----------
+
+const AddProjectParams = Type.Object(
+  {
+    path: Type.String({ description: "Path to a git repository, any directory inside it." }),
+    name: Type.Optional(Type.String({ description: "Short name: a-z, 0-9, dashes. Default: the repository directory name." })),
+    note: Type.Optional(Type.String({ description: "One line every cook of this project reads, for example how to run the tests." })),
+    baseBranch: Type.Optional(Type.String({ description: "Branch tasks fork from. Default: the current branch of the repository." })),
+  },
+  { additionalProperties: false },
+);
+const DispatchParams = Type.Object(
+  {
+    project: Type.String({ description: "Registered project name." }),
+    title: Type.String({ description: "Imperative, under 60 characters, for example 'Add rate limiting to /login'." }),
+    brief: Type.String({
+      description: "Everything the cook needs: the intent in the human's words, what done means and the check that proves it, constraints, and the delivery (commit only, push, or open a PR). The cook cannot see this conversation.",
+    }),
+    model: Type.Optional(Type.String({ description: "provider/model for this cook. Default: the kitchen config." })),
+  },
+  { additionalProperties: false },
+);
+const TaskParam = Type.String({ description: "Task id, for example api-7." });
+const TaskParams = Type.Object({ task: TaskParam }, { additionalProperties: false });
+const SendParams = Type.Object({ task: TaskParam, message: Type.String({ description: "An answer, a correction, or the next instruction. Plain text." }) }, { additionalProperties: false });
+const CloseParams = Type.Object(
+  { task: TaskParam, discard: Type.Optional(Type.Boolean({ description: "Drop unlanded commits and a dirty worktree. Only on the human's explicit word." })) },
+  { additionalProperties: false },
+);
+const NoParams = Type.Object({}, { additionalProperties: false });
+
+function checked<T extends TSchema>(schema: T, params: unknown): Static<T> {
+  if (!Value.Check(schema, params)) throw new ChefError(`Invalid parameters: ${Value.Errors(schema, params)[0]?.message ?? "schema mismatch"}.`);
+  return params;
+}
+
+// ---------- Wake path ----------
+
+/**
+ * Batches notices into one wake. The first notice opens a quiet window that
+ * each new notice extends, capped from the first, so ten cooks finishing
+ * together cost one chef turn. Dedupe key: task#run.
+ */
+export class Waker {
+  private readonly pending = new Map<string, Notice>();
+  private readonly deliver: (notices: Notice[]) => void;
+  private readonly timing: { quietMs: number; maxWaitMs: number };
+  private readonly clock: Pick<typeof globalThis, "setTimeout" | "clearTimeout">;
+  private quiet: ReturnType<typeof setTimeout> | undefined;
+  private cap: ReturnType<typeof setTimeout> | undefined;
+
+  constructor(deliver: (notices: Notice[]) => void, timing = { quietMs: 1500, maxWaitMs: 5000 }, clock: Pick<typeof globalThis, "setTimeout" | "clearTimeout"> = globalThis) {
+    this.deliver = deliver;
+    this.timing = timing;
+    this.clock = clock;
+  }
+
+  offer(notices: readonly Notice[]): void {
+    let fresh = false;
+    for (const n of notices) {
+      const key = `${n.task}#${n.run}`;
+      if (this.pending.has(key)) continue;
+      this.pending.set(key, n);
+      fresh = true;
+    }
+    if (!fresh) return;
+    if (this.quiet) this.clock.clearTimeout(this.quiet);
+    this.quiet = this.clock.setTimeout(() => this.flush(), this.timing.quietMs);
+    this.cap ??= this.clock.setTimeout(() => this.flush(), this.timing.maxWaitMs);
+  }
+
+  private flush(): void {
+    if (this.quiet) this.clock.clearTimeout(this.quiet);
+    if (this.cap) this.clock.clearTimeout(this.cap);
+    this.quiet = this.cap = undefined;
+    const notices = [...this.pending.values()];
+    this.pending.clear();
+    if (notices.length) this.deliver(notices);
+  }
+
+  /** Drops pending notices without delivering. They are not marked, so the next session derives them again. */
+  dispose(): void {
+    if (this.quiet) this.clock.clearTimeout(this.quiet);
+    if (this.cap) this.clock.clearTimeout(this.cap);
+    this.quiet = this.cap = undefined;
+    this.pending.clear();
+  }
+}
+
+// ---------- Install ----------
+
+interface ChefSession {
+  reader: KitchenReader;
+  owner: Kitchen | undefined;
+  waker: Waker | undefined;
+  timer: ReturnType<typeof setInterval>;
+  lastLines: string;
+  restart: RestartNote | undefined;
+  firstTick: boolean;
+  ticking: boolean;
+  shown: Set<string>;
+}
+
+const agentDir = (): string => process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+const now = (): Millis => millis(Date.now());
+
+export function installChef(pi: ExtensionAPI): void {
+  let session: ChefSession | undefined;
+
+  pi.registerFlag("chef", { type: "boolean", description: "Open the chef kitchen in this session." });
+
+  const activeWithChef = (on: boolean): string[] => {
+    const others = pi.getActiveTools().filter((t) => !(CHEF_TOOLS as readonly string[]).includes(t));
+    return on ? [...others, ...CHEF_TOOLS] : others;
+  };
+
+  const chefModeOn = (ctx: ExtensionContext): boolean => {
+    const entries = ctx.sessionManager.getEntries().filter((e) => e.type === "custom" && e.customType === "chef-mode");
+    const last = entries.at(-1);
+    return last?.type === "custom" && Value.Check(ChefModeEntrySchema, last.data) && last.data.on;
+  };
+
+  const open = async (ctx: ExtensionContext, takeover = false): Promise<ChefSession> => {
+    if (session && !takeover) return session;
+    if (session) close(ctx);
+    const store = new Store(kitchenDir(process.env, agentDir()));
+    const self = { pid: process.pid as Pid, sessionId: ctx.sessionManager.getSessionId() };
+    const opened = await Kitchen.open({ store, pi: piInvocation(), chefEntry: CHEF_ENTRY, self }, { takeover });
+    const owner = opened.kind === "owner" ? opened.kitchen : undefined;
+    const current: ChefSession = {
+      reader: opened.kind === "owner" ? opened.kitchen : opened.reader,
+      owner,
+      waker: undefined,
+      timer: setInterval(() => void tick(ctx), TICK_MS),
+      lastLines: "",
+      restart: undefined,
+      firstTick: true,
+      ticking: false,
+      shown: new Set(),
+    };
+    current.timer.unref();
+    if (owner) {
+      current.waker = new Waker((notices) => {
+        pi.sendMessage({ customType: "chef-wake", content: formatWake(notices, current.restart), display: true, details: { notices } }, { triggerTurn: true, deliverAs: "followUp" });
+        current.restart = undefined;
+        owner.markNotified(notices);
+      });
+    }
+    session = current;
+    pi.setActiveTools(activeWithChef(true));
+    if (!chefModeOn(ctx)) pi.appendEntry("chef-mode", { on: true });
+    await tick(ctx);
+    return current;
+  };
+
+  const tick = async (ctx: ExtensionContext): Promise<void> => {
+    const s = session;
+    if (!s || s.ticking) return;
+    s.ticking = true;
+    try {
+      let board;
+      if (s.owner) {
+        const report = await s.owner.tick();
+        if (report.kind === "lost") {
+          s.owner = undefined;
+          s.waker?.dispose();
+          s.waker = undefined;
+          if (ctx.hasUI) ctx.ui.notify(lostError(report.holder).message, "warning");
+          board = await s.reader.board();
+        } else {
+          if (s.firstTick && report.board.open.length) s.restart = { cooking: report.board.cooks.busy, finished: report.notices.length };
+          s.waker?.offer(report.notices);
+          for (const err of report.errors) {
+            if (s.shown.has(err)) continue;
+            s.shown.add(err);
+            if (ctx.hasUI) ctx.ui.notify(`chef: ${err}`, "error");
+          }
+          board = report.board;
+        }
+      } else {
+        board = await s.reader.board();
+      }
+      s.firstTick = false;
+      const lines = boardLines(board, now(), WIDGET_WIDTH);
+      const key = lines.join("\n");
+      if (key !== s.lastLines && ctx.hasUI) {
+        s.lastLines = key;
+        ctx.ui.setWidget("chef", lines.length ? lines : undefined, { placement: "belowEditor" });
+        ctx.ui.setStatus("chef", statusText(board));
+      }
+    } catch (e) {
+      const text = `chef tick failed: ${(e as Error).message}`;
+      if (!s.shown.has(text)) {
+        s.shown.add(text);
+        if (ctx.hasUI) ctx.ui.notify(text, "error");
+      }
+    } finally {
+      s.ticking = false;
+    }
+  };
+
+  const close = (ctx: ExtensionContext | undefined): void => {
+    if (!session) return;
+    clearInterval(session.timer);
+    session.waker?.dispose();
+    session.owner?.release();
+    if (ctx?.hasUI) {
+      ctx.ui.setWidget("chef", undefined);
+      ctx.ui.setStatus("chef", undefined);
+    }
+    session = undefined;
+  };
+
+  pi.on("session_start", async (_event, ctx) => {
+    if (pi.getFlag("chef") === true || chefModeOn(ctx)) await open(ctx);
+  });
+  pi.on("session_shutdown", () => close(undefined));
+
+  const reader = (): KitchenReader => {
+    if (!session) throw new ChefError("Chef mode is off. Run /chef, or start pi with --chef.");
+    return session.reader;
+  };
+  const owner = (): Kitchen => {
+    const s = session;
+    if (!s) throw new ChefError("Chef mode is off. Run /chef, or start pi with --chef.");
+    if (!s.owner) throw lostError(s.reader.holder());
+    return s.owner;
+  };
+  const task = (raw: string): TaskId => parseTaskId(raw, reader().taskIds());
+  const text = (t: string) => ({ content: [{ type: "text" as const, text: t }], details: undefined });
+  const common = { defaultActive: false as const, exposure: "model-only" as const, executionMode: "sequential" as const };
+
+  pi.registerTool({
+    ...common,
+    name: "chef_add_project",
+    label: "Add project",
+    description: "Register a git repository as a kitchen project, so tasks can be dispatched to it.",
+    promptSnippet: "Register a git repository as a chef project",
+    parameters: AddProjectParams,
+    async execute(_id, params) {
+      const p = await owner().addProject(checked(AddProjectParams, params));
+      return text(`Registered ${p.name}: ${p.path}, tasks fork from ${p.baseBranch}.`);
+    },
+  });
+
+  pi.registerTool({
+    ...common,
+    name: "chef_dispatch",
+    label: "Dispatch",
+    description: "Create a task for a project and hand it to a cook, a Pi agent in its own git worktree and branch. Starts at once or queues behind the cook limit. Returns immediately.",
+    promptSnippet: "Hand a task to a cook in its own worktree",
+    promptGuidelines: [
+      "Before the first chef_dispatch in a session, load the chef skill.",
+      "Never poll cooks. A kitchen update message wakes you when a cook is done, needs a decision, is blocked, or failed.",
+      "One task is one branch of reviewable work in one project. Split larger requests.",
+    ],
+    parameters: DispatchParams,
+    async execute(_id, params) {
+      const k = owner();
+      const view = await k.dispatch(checked(DispatchParams, params));
+      const board = await k.board();
+      const cooks = `${board.cooks.busy}/${board.cooks.cap} cooks busy`;
+      if (view.state.kind === "cooking") return text(`${view.spec.id} is cooking on branch ${view.spec.branch} (${cooks}). You will get a kitchen update when it needs you.`);
+      const queue = board.open.filter((v) => v.state.kind === "queued").sort((a, b) => a.spec.createdAt - b.spec.createdAt);
+      return text(`${view.spec.id} is queued, position ${queue.findIndex((v) => v.spec.id === view.spec.id) + 1} (${cooks}). It starts when a cook frees up.`);
+    },
+  });
+
+  pi.registerTool({
+    ...common,
+    name: "chef_board",
+    label: "Board",
+    description: "Show the projects and every open task with its state, current activity, and age.",
+    promptSnippet: "Show the kitchen board",
+    parameters: NoParams,
+    async execute() {
+      return text(await boardText(reader()));
+    },
+  });
+
+  pi.registerTool({
+    ...common,
+    name: "chef_send",
+    label: "Send",
+    description: "Send a message to a task's cook: an answer, a correction, a follow-up, or a retry. Steers a running cook. Restarts an idle one on its own session with the message, so it keeps its context.",
+    promptSnippet: "Answer, steer, or resume a cook",
+    parameters: SendParams,
+    async execute(_id, params) {
+      const p = checked(SendParams, params);
+      const id = task(p.task);
+      const d = await owner().send(id, p.message);
+      switch (d.kind) {
+        case "steer":
+          return text(`Sent to ${id}'s running cook. It reads the message after its current step. If the run ends first, chef restarts it with your message.`);
+        case "relaunched":
+          return text(`${id} restarted (run ${d.run}) with your message.`);
+        case "queued":
+          return text(`${id} restarts with your message when a cook frees up (position ${d.position}).`);
+        case "held":
+          return text(`${id} holds your message. It is stopped; send again to resume it.`);
+      }
+    },
+  });
+
+  pi.registerTool({
+    ...common,
+    name: "chef_stop",
+    label: "Stop",
+    description: "Stop a task's cook now, or hold a queued task. The worktree and branch stay. chef_send resumes it.",
+    promptSnippet: "Stop a cook",
+    parameters: TaskParams,
+    async execute(_id, params) {
+      const id = task(checked(TaskParams, params).task);
+      const view = await owner().stop(id);
+      if (view.state.kind === "idle" && view.state.outcome.kind === "stopped") return text(`${id} stopped. Its worktree and branch stay. chef_send ${id} resumes it.`);
+      if (view.state.kind === "cooking") return text(`${id} is stopping. The cook gets SIGTERM now and SIGKILL after the grace period.`);
+      return text(`${id} is ${stateText(view.state)}. Nothing to stop.`);
+    },
+  });
+
+  pi.registerTool({
+    ...common,
+    name: "chef_result",
+    label: "Result",
+    description: "Read a task's outcome for review: the cook's report or final text, branch, commits ahead of base, landed or not, worktree clean or dirty, diffstat, and the transcript path.",
+    promptSnippet: "Review a task's outcome",
+    parameters: TaskParams,
+    async execute(_id, params) {
+      const id = task(checked(TaskParams, params).task);
+      return text(resultText(await reader().result(id), now()));
+    },
+  });
+
+  pi.registerTool({
+    ...common,
+    name: "chef_close",
+    label: "Close",
+    description: "Close a finished task: remove its worktree and record it closed. Refuses a dirty worktree or commits that are on neither the base branch nor a remote branch, unless discard is true.",
+    promptSnippet: "Close a landed task",
+    parameters: CloseParams,
+    async execute(_id, params) {
+      const p = checked(CloseParams, params);
+      const id = task(p.task);
+      const { view, branchKept } = await owner().close(id, p.discard === true);
+      const branch = branchKept ? `Branch ${view.spec.branch} kept, it still has commits.` : `Branch ${view.spec.branch} deleted.`;
+      return text(`${id} closed. Worktree removed. ${branch}`);
+    },
+  });
+
+  pi.registerCommand("chef", {
+    description: "Open the chef kitchen here and show the board. /chef on | off | takeover | board",
+    getArgumentCompletions: (prefix) => ["on", "off", "takeover", "board"].filter((s) => s.startsWith(prefix)).map((s) => ({ value: s, label: s })),
+    handler: async (args, ctx) => {
+      const verb = args.trim() || "on";
+      if (verb === "off") {
+        close(ctx);
+        pi.setActiveTools(activeWithChef(false));
+        pi.appendEntry("chef-mode", { on: false });
+        ctx.ui.notify("Chef mode is off in this session. Cooks keep running.", "info");
+        return;
+      }
+      if (!["on", "takeover", "board"].includes(verb)) {
+        ctx.ui.notify("Usage: /chef [on | off | takeover | board]", "warning");
+        return;
+      }
+      const s = await open(ctx, verb === "takeover");
+      ctx.ui.notify(await boardText(s.reader), "info");
+    },
+  });
+}
+
+// ---------- Text ----------
+
+async function boardText(reader: KitchenReader): Promise<string> {
+  const board = await reader.board();
+  const projects = board.projects.length ? board.projects.map((p) => `${p.name}: ${p.path} (base ${p.baseBranch})`).join("\n") : "No projects. Register one with chef_add_project.";
+  const lines = board.open.length ? boardLines(board, now(), BOARD_WIDTH) : [boardHeader(board), "No open tasks."];
+  const closed = board.closedCount ? `${plural(board.closedCount, "closed task")} not shown.` : "";
+  return [projects, "", ...lines, closed].filter((l, i, all) => l !== "" || i < all.length - 1).join("\n");
+}
+
+export function resultText(r: TaskResult, at: Millis): string {
+  const { view } = r;
+  const { spec, state } = view;
+  const lines: string[] = [];
+  const age = state.kind === "idle" || state.kind === "cooking" ? ` ${formatAge(state.since, at)}` : "";
+  const run = state.kind === "idle" && state.run !== undefined ? `, run ${state.run}` : state.kind === "cooking" ? `, run ${state.run}` : "";
+  lines.push(`${spec.id} "${spec.title}": ${state.kind === "idle" ? `idle${age}, ${outcomeText(state.outcome)}` : stateText(state) + age}${run}.`);
+  if (state.kind === "idle") {
+    const o = state.outcome;
+    const body = o.kind === "done" ? o.summary : o.kind === "needs_decision" ? o.question : o.kind === "stopped" ? "" : o.reason;
+    if (body) lines.push(`${o.kind === "needs_decision" ? "Question" : o.kind === "done" ? "Summary" : "Reason"}: ${body.trim().slice(0, 2000)}`);
+  }
+  if (r.git) {
+    const landed = r.git.unlanded === 0 ? (r.git.ahead ? "all landed" : "nothing to land") : `${r.git.unlanded} not landed`;
+    const clean = r.git.dirtyFiles ? `${plural(r.git.dirtyFiles, "changed file")}` : "clean";
+    lines.push(`Branch ${spec.branch} in ${spec.worktree}: ${plural(r.git.ahead, "commit")} ahead of ${spec.baseBranch}, ${landed}, ${clean}.`);
+    if (r.diffstat) lines.push(r.diffstat);
+  } else {
+    lines.push(`Worktree ${spec.worktree} is gone. Branch ${spec.branch} may still exist in ${r.project?.path ?? "the repository"}.`);
+  }
+  if (r.transcript) lines.push(`Transcript: ${r.transcript}`);
+  const text = lines.join("\n");
+  return text.length > 4000 ? `${text.slice(0, 3990)}\n[cut]` : text;
+}

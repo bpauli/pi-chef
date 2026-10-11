@@ -15,6 +15,7 @@ function nextStep(messages) {
   }
   if (verb === "bash:") return { tool: { name: "bash", arguments: JSON.stringify({ command: arg }) } };
   if (verb === "echo-users:") return { text: users.slice(1).map(textOf).join(" | ") || "(no extra user messages)" };
+  if (verb === "echo-system:") return { text: messages.filter((m) => m.role === "system").map(textOf).join("\n") || "(no system prompt)" };
   return { text: arg };
 }
 
