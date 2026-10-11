@@ -132,8 +132,9 @@ async function scanMarked(): Promise<Marked[]> {
 
 export async function scanCooks(): Promise<Map<string, Pid>> {
   const marked = await scanMarked();
-  const pids = new Set(marked.map((m) => m.pid as number));
-  return new Map(marked.filter((m) => !pids.has(m.ppid)).map((m) => [m.sessionId, m.pid]));
+  const markedPids = new Set<number>(marked.map((m) => m.pid));
+  const parentUnmarked = (m: Marked): boolean => !markedPids.has(m.ppid);
+  return new Map(marked.filter(parentUnmarked).map((m) => [m.sessionId, m.pid]));
 }
 
 export async function pidStart(pid: number): Promise<string | undefined> {

@@ -155,14 +155,13 @@ const errTail = (text: string): string => text.trim().split("\n").filter(Boolean
 function launchFailureOf(rec: TaskRecord, last: RunRecord | undefined): LaunchFailure | undefined {
   const event = rec.events.filter((e) => e.type === "launch_failed").at(-1);
   const emptyClaim = last?.claim.kind === "empty" ? { n: last.n, at: last.claim.at, tail: errTail(last.stderrTail) } : undefined;
-  const tail = emptyClaim?.tail ?? "";
-  if (event && !rec.runs.some((r) => r.n === event.run && r.claim.kind === "started") && (last === undefined || event.run >= last.n)) {
-    const detail = tail && emptyClaim?.n === event.run ? `${event.reason}: ${tail}` : event.reason;
-    return { run: runNo(event.run), at: millis(event.at), reason: detail };
+  const hasOutput = (run: number): boolean => rec.runs.some((r) => r.n === run && r.claim.kind === "started");
+  const notBeforeLastRun = (run: number): boolean => last === undefined || run >= last.n;
+  if (event && !hasOutput(event.run) && notBeforeLastRun(event.run)) {
+    const reason = emptyClaim?.tail && emptyClaim.n === event.run ? `${event.reason}: ${emptyClaim.tail}` : event.reason;
+    return { run: runNo(event.run), at: millis(event.at), reason };
   }
-  if (emptyClaim && tail) {
-    return { run: emptyClaim.n, at: emptyClaim.at, reason: `cook exited before its first output line: ${tail}` };
-  }
+  if (emptyClaim?.tail) return { run: emptyClaim.n, at: emptyClaim.at, reason: `cook exited before its first output line: ${emptyClaim.tail}` };
   return undefined;
 }
 
