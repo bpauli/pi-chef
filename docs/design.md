@@ -96,7 +96,7 @@ type Outcome =
   | { kind: "stopped" };
 ```
 
-A run that settled without `chef_report` derives `done` with `reported: false` and the final assistant text as the summary. A provider error, a crash, or an exit before `agent_settled` derives `failed`. A prompt file with no run file, or a zero-byte run file with no live process and an empty err file, derives `queued(interrupted-launch)`, not `failed`: the chef crashed between the claim and the spawn, and the tick relaunches the same run from its prompt.
+A run that settled without `chef_report` derives `done` with `reported: false` and the final assistant text as the summary. A provider error, a crash, or an exit before `agent_settled` derives `failed`. A prompt file with no run file, or a zero-byte run file with no live process and an empty err file, derives `queued(interrupted-launch)`, not `failed`: the chef crashed between the claim and the spawn, and the tick relaunches the same run from its prompt. An empty claim is reclaimed only when it is older than `reclaimAfterMs` (default 30 s), so two owners in a takeover window never unlink each other's fresh claim.
 
 ### Launch failures
 
@@ -117,9 +117,11 @@ No pid is stored on disk. A cook is identified by `CHEF_SESSION_ID=<uuid>` in it
 - At launch it records the pid that `spawn` returns.
 - At activation (restart) it scans once: `/proc/*/environ` on Linux, `ps -E -eo pid=,ppid=,command=` elsewhere. This adopts cooks that outlived the last chef.
 - On each tick it checks a known pid with `process.kill(pid, 0)` and confirms the environment still holds the marker (`/proc/<pid>/environ` on Linux, `ps -E -o command= -p <pid>` elsewhere). This guards against pid reuse.
-- A claimed, unsettled run with no known pid gets one scan before it counts as dead. The scan adopts a cook another session launched. After that scan the run is dead for good.
+- A claimed, unsettled run with no known pid gets one scan before it counts as dead. The scan adopts a cook another session launched. After that scan the run is dead for the tick, but every launch scans once more right before it claims, so a cook the scan missed never gets a sibling on its session.
 
 A stop sends SIGTERM to the cook's process group, and Pi kills its own bash tree. SIGKILL after the grace period gives Pi no chance, so a command it was running can outlive it.
+
+A settled run whose process is still alive after the exit grace period (`exitGraceMs`, default 10 s from the run's last message) gets SIGTERM from the tick, then SIGKILL after the kill grace period. `chef_stop` on such a task sends SIGTERM at once. The task stays `idle` with its outcome throughout; the signal frees the session for the next run.
 
 All subprocess calls (`ps`, `git`) are async. Git facts are computed only for `chef_result`, `chef_close`, and dispatch, never on the tick. Every git argv puts `--end-of-options` before the refs it takes from the kitchen, and the only model-controlled ref, the base branch, is validated at `chef_add_project`.
 

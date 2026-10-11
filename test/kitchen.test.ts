@@ -195,7 +195,7 @@ test("stop ends a running cook as stopped with no notice, and chef_send resumes 
   });
   const pid = (await scanCooks()).get(view.spec.sessionId);
   assert.ok(pid);
-  const stopped = await kitchen.stop(view.spec.id);
+  const stopped = (await kitchen.stop(view.spec.id)).view;
   const idle = stopped.state.kind === "idle" ? stopped : await waitState(kitchen, view.spec.id, "idle");
   assert.deepEqual(idle.state.kind === "idle" && idle.state.outcome, { kind: "stopped" });
   await until("cook process exit", () => (alive(pid) ? undefined : true));
@@ -436,7 +436,10 @@ test("a cook that never exits after its report is signalled and killed by the ti
   assert.deepEqual(await kitchen.send(view.spec.id, "use cookies"), { kind: "relaunched", run: 2 });
   const n2 = await waitNotice(kitchen, view.spec.id);
   assert.deepEqual(n2.outcome, { kind: "done", summary: "used cookies", reported: true });
-  await until("run 2 exit", async () => ((await scanCooks()).has(view.spec.sessionId) ? undefined : true), 10_000);
+  await until("run 2 exit, forced by the tick as well", async () => {
+    await kitchen.tick();
+    return (await scanCooks()).has(view.spec.sessionId) ? undefined : true;
+  }, 10_000);
   assert.deepEqual(store.readEvents(view.spec.id).map((e) => e.type), ["notified", "notified"]);
 });
 

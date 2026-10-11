@@ -290,7 +290,7 @@ test("plan launches the oldest queued tasks first and never more than cap minus 
 });
 
 test("plan never launches a task whose session still has a live process", () => {
-  const rec = record({ runs: [run(1, settledDone())], pendingAt: [millis(5)] });
+  const rec = record({ runs: [run(1, { ...settledDone(), lastAt: millis(NOW - 1000) })], pendingAt: [millis(5)] });
   const { actions } = plan({ ...base, records: [rec], live: live() });
   assert.deepEqual(actions, []);
 });

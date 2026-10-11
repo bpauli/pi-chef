@@ -371,10 +371,14 @@ export function installChef(pi: ExtensionAPI): void {
     parameters: TaskParams,
     async execute(_id, params) {
       const id = task(checked(TaskParams, params).task);
-      const view = await owner().stop(id);
-      if (view.state.kind === "idle" && view.state.outcome.kind === "stopped") return text(`${id} stopped. Its worktree and branch stay. chef_send ${id} resumes it.`);
-      if (view.state.kind === "cooking") return text(`${id} is stopping. The cook gets SIGTERM now and SIGKILL after the grace period.`);
-      return text(`${id} is ${stateText(view.state)}. Nothing to stop.`);
+      const { view, signalled } = await owner().stop(id);
+      const { state } = view;
+      if (state.kind === "idle" && state.outcome.kind === "stopped") {
+        return text(state.run === undefined ? `${id} is held before its first run. chef_send ${id} starts it.` : `${id} stopped. Its worktree and branch stay. chef_send ${id} resumes it.`);
+      }
+      if (state.kind === "cooking") return text(`${id} is stopping. The cook gets SIGTERM now and SIGKILL after the grace period.`);
+      if (signalled) return text(`${id} is ${stateText(state)}; its cook had reported and was still running. It gets SIGTERM now and SIGKILL after the grace period.`);
+      return text(`${id} is ${stateText(state)}. Nothing to stop.`);
     },
   });
 

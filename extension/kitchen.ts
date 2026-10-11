@@ -23,7 +23,7 @@ import {
   parseModel,
   parseProjectName,
 } from "./domain.ts";
-import { type Action, type GitFacts, type LiveCooks, type TaskRecord, closeVerdict, deriveTask, nextRunOf, plan } from "./derive.ts";
+import { type Action, type GitFacts, type LiveCooks, type PlanInput, type TaskRecord, closeVerdict, deriveTask, nextRunOf, plan } from "./derive.ts";
 import { type CookEnd, CookTable, type PiInvocation, firstPrompt, followUpPrompt, launchCook, messagesSection, pidStart, signalCook } from "./cooks.ts";
 import { type RemoveResult, diffstat, ensureWorktree, gitFacts, inspectRepo, removeWorktree, verifyBaseBranch } from "./git.ts";
 import { RunTails, type Snapshot, type Store } from "./store.ts";
@@ -35,7 +35,12 @@ export interface KitchenDeps {
   /** The Pi session that asks to own the kitchen. */
   self: { pid: Pid; sessionId: string };
   now?: () => Millis;
+  /** SIGKILL this long after a SIGTERM. Default 5000. */
   killGraceMs?: number;
+  /** SIGTERM a cook still alive this long after its run settled. Default 10000. */
+  exitGraceMs?: number;
+  /** Reclaim an empty claim only when it is older than this. Default 30000. */
+  reclaimAfterMs?: number;
   /** How long `send` waits for a reported cook to exit before it answers `exiting`. Default 5000. */
   exitWaitMs?: number;
 }
@@ -114,7 +119,7 @@ export class KitchenReader {
   async board(): Promise<Board> {
     const snap = this.snapshot();
     const live = await this.liveCooks(snap.records);
-    const { views } = plan({ records: snap.records, live, now: this.now(), cap: snap.config.maxCooks, killGraceMs: 0 });
+    const { views } = plan(this.planInput(snap.records, live, snap.config.maxCooks));
     return this.boardOf(views, snap, "read-only", holderOf(this.store.readLease()));
   }
 
@@ -141,25 +146,41 @@ export class KitchenReader {
   }
 
   /**
-   * Cheap per tick: kill(0) plus an argv check per known pid. A claimed, unsettled
-   * run with no known pid gets one full ps scan, which adopts a cook another
-   * session launched. After that scan a missing process is dead.
+   * Cheap per tick: kill(0) plus an environment check per known pid. A claimed,
+   * unsettled run with no known pid gets one full scan, which adopts a cook
+   * another session launched. After that scan a missing process is dead, until
+   * a launch for the task rescans (see `launch`).
    */
   protected async liveCooks(records: readonly TaskRecord[]): Promise<LiveCooks> {
     let live = await this.cooks.live();
+    const candidates = new Set<string>();
     const unknown = records.filter((rec) => {
       const last = rec.runs.at(-1);
       if (!last?.claimed || last.facts.settled || live.has(rec.spec.sessionId)) return false;
       const key = `${rec.spec.id}#${last.n}`;
+      candidates.add(key);
       if (this.scanned.has(key)) return false;
       this.scanned.add(key);
       return true;
     });
+    for (const key of this.scanned) if (!candidates.has(key)) this.scanned.delete(key);
     if (unknown.length) {
       await this.cooks.adopt();
       live = await this.cooks.live();
     }
     return live;
+  }
+
+  protected planInput(records: readonly TaskRecord[], live: LiveCooks, cap: number): PlanInput {
+    return {
+      records,
+      live,
+      now: this.now(),
+      cap,
+      killGraceMs: this.deps.killGraceMs ?? 5000,
+      exitGraceMs: this.deps.exitGraceMs ?? 10_000,
+      reclaimAfterMs: this.deps.reclaimAfterMs ?? 30_000,
+    };
   }
 
   protected boardOf(views: TaskView[], snap: Snapshot, role: Board["role"], holder: Holder | undefined): Board {
@@ -263,7 +284,10 @@ export class Kitchen extends KitchenReader {
         if (report.kind === "lost") throw lostError(report.holder);
         const state = report.board.open.find((v) => v.spec.id === task)?.state;
         if (state?.kind === "cooking") {
-          return before.kind === "cooking" && before.run === state.run ? { kind: "steer" } : { kind: "relaunched", run: state.run };
+          // The same run with output is still the cook that was there (or one the launch rescan found): the message steers it.
+          const last = rec.runs.at(-1);
+          const sameRun = last !== undefined && last.n === state.run && last.bytes > 0;
+          return sameRun ? { kind: "steer" } : { kind: "relaunched", run: state.run };
         }
         if (state?.kind !== "queued") return { kind: "held" };
         if (!(await this.cooks.live()).has(rec.spec.sessionId)) {
@@ -277,21 +301,24 @@ export class Kitchen extends KitchenReader {
   }
 
   /** Stops the live run, or holds a queued task. The tick escalates to SIGKILL. */
-  stop(task: TaskId): Promise<TaskView> {
+  stop(task: TaskId): Promise<{ view: TaskView; signalled: boolean }> {
     return this.mutate(async () => {
       const rec = this.store.loadRecord(task, this.tails);
-      await this.stopNow(rec, await this.liveCooks([rec]));
-      return this.viewAfterTick(task);
+      const signalled = await this.stopNow(rec, await this.liveCooks([rec]));
+      return { view: await this.viewAfterTick(task), signalled };
     });
   }
 
-  private async stopNow(rec: TaskRecord, live: LiveCooks): Promise<void> {
+  /** A cooking run gets a stop event and SIGTERM; a queued task is held; a settled cook that is still alive gets SIGTERM. */
+  private async stopNow(rec: TaskRecord, live: LiveCooks): Promise<boolean> {
     const task = rec.spec.id;
     const { state } = deriveTask(rec, live, this.now());
     const run = state.kind === "cooking" ? state.run : state.kind === "queued" ? nextRunOf(rec) : undefined;
     if (run !== undefined) this.store.appendEvent(task, { type: "stop", at: this.now(), run });
     const pid = live.get(rec.spec.sessionId);
-    if (state.kind === "cooking" && pid !== undefined) await signalCook(pid, rec.spec.sessionId, "SIGTERM");
+    if (pid === undefined || state.kind === "queued") return false;
+    await signalCook(pid, rec.spec.sessionId, "SIGTERM");
+    return true;
   }
 
   /**
@@ -343,7 +370,7 @@ export class Kitchen extends KitchenReader {
     const { records } = snap;
     const live = await this.liveCooks(records);
     const cap = snap.config.maxCooks;
-    const { views, actions } = plan({ records, live, now: this.now(), cap, killGraceMs: this.deps.killGraceMs ?? 5000 });
+    const { views, actions } = plan(this.planInput(records, live, cap));
     const notices: Notice[] = [];
     const errors: string[] = [...snap.problems];
     let launched = false;
@@ -357,7 +384,7 @@ export class Kitchen extends KitchenReader {
       }
     }
     // A launch attempt changes the views this tick reports: the board shows the cook or the failure, not the queue.
-    const fresh = launched ? plan({ records: this.snapshot().records, live: await this.cooks.live(), now: this.now(), cap, killGraceMs: 0 }).views : views;
+    const fresh = launched ? plan(this.planInput(this.snapshot().records, await this.cooks.live(), cap)).views : views;
     return { kind: "ok", board: this.boardOf(fresh, snap, "owner", holderOf(this.store.readLease())), notices, errors };
   }
 
@@ -384,6 +411,10 @@ export class Kitchen extends KitchenReader {
   }
 
   private async launch(action: Extract<Action, { kind: "launch" }>, spec: TaskSpec): Promise<void> {
+    // The per-tick liveness check scans once per dead-looking run. A launch is rare
+    // and a second cook on one session is costly, so it scans again right before.
+    await this.cooks.adopt();
+    if ((await this.cooks.live()).has(spec.sessionId)) return;
     const project = this.requireProject(spec.project);
     await ensureWorktree(project.path, spec.worktree, spec.branch, spec.baseBranch);
     const pending = this.store.pendingMessages(spec.id);

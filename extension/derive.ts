@@ -303,7 +303,12 @@ export interface PlanInput {
   live: LiveCooks;
   now: Millis;
   cap: number;
+  /** SIGKILL this long after the SIGTERM of a stop, a close, or a stuck exit. */
   killGraceMs: number;
+  /** A cook still alive this long after its run settled gets SIGTERM. */
+  exitGraceMs: number;
+  /** An empty claim is reclaimed only when it is older than this, so a launch in progress elsewhere is not undone. */
+  reclaimAfterMs: number;
 }
 
 /**
@@ -312,7 +317,7 @@ export interface PlanInput {
  * removal accepts a missing path, and notify is marked only after delivery.
  */
 export function plan(input: PlanInput): { views: TaskView[]; actions: Action[] } {
-  const { live, now, killGraceMs } = input;
+  const { live, now, killGraceMs, exitGraceMs, reclaimAfterMs } = input;
   const views: TaskView[] = [];
   const actions: Action[] = [];
   const queued: { rec: TaskRecord; view: TaskView }[] = [];
@@ -324,7 +329,7 @@ export function plan(input: PlanInput): { views: TaskView[]; actions: Action[] }
     views.push(view);
     const { state } = view;
     const pid = live.get(rec.spec.sessionId);
-    const { lastStop, closed } = fold(rec);
+    const { last, lastStop, closed } = fold(rec);
     if (state.kind === "closed") {
       if (rec.worktreeExists) actions.push({ kind: "remove-worktree", task: rec.spec.id, discard: state.discarded });
       if (pid !== undefined && closed) actions.push({ kind: "signal", task: rec.spec.id, pid, signal: escalate(closed.at) });
@@ -340,6 +345,11 @@ export function plan(input: PlanInput): { views: TaskView[]; actions: Action[] }
     if (state.kind === "queued") queued.push({ rec, view });
     const notice = noticeFor(rec, view);
     if (notice) actions.push({ kind: "notify", notice });
+    // A settled run whose process has not exited: the task is idle, and after the exit grace the owner ends the process.
+    if (pid !== undefined && last?.facts.settled) {
+      const settledAt = last.facts.lastAt ?? last.claimedAt ?? now;
+      if (now - settledAt > exitGraceMs) actions.push({ kind: "signal", task: rec.spec.id, pid, signal: escalate(settledAt + exitGraceMs) });
+    }
   }
 
   queued.sort((a, b) => a.rec.spec.createdAt - b.rec.spec.createdAt);
@@ -348,8 +358,10 @@ export function plan(input: PlanInput): { views: TaskView[]; actions: Action[] }
     if (live.has(rec.spec.sessionId)) continue;
     const { last, nextRun, briefDelivered } = fold(rec);
     const reuse = last !== undefined && last.n === nextRun;
+    const reclaim = reuse && last.claimed;
+    if (reclaim && now - (last.claimedAt ?? now) < reclaimAfterMs) continue;
     const prompt = reuse ? "existing" : briefDelivered ? "messages" : "brief";
-    actions.push({ kind: "launch", task: rec.spec.id, run: nextRun, prompt, reclaim: reuse && last.claimed });
+    actions.push({ kind: "launch", task: rec.spec.id, run: nextRun, prompt, reclaim });
     busy += 1;
   }
   return { views, actions };
