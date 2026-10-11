@@ -147,7 +147,7 @@ export const CookReportSchema = Type.Object(
     status: StringEnum(["done", "needs_decision", "blocked", "failed"] as const),
     summary: Type.String({
       description:
-        "done: what changed, the commits, how you verified it. needs_decision: the question and the options. blocked or failed: what stopped you and what you tried.",
+        "done: what changed, the commits, and the verify command you ran with what it printed. needs_decision: the question and the options. blocked or failed: what stopped you and what you tried.",
     }),
   },
   { additionalProperties: false },

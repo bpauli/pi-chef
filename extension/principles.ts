@@ -29,7 +29,7 @@ export const RULES: Record<Role, readonly Rule[]> = {
     { text: "Make the smallest change that does the task. Delete before you add.", principles: ["principle-laziness-protocol", "principle-subtract-before-you-add"] },
     { text: "Validate data at the boundaries. Inside, trust the types.", principles: ["principle-boundary-discipline", "principle-type-system-discipline"] },
     { text: "A test must fail when the behavior it covers breaks.", principles: ["principle-test-behavior-not-implementation"] },
-    { text: "Before you report done, verify the change on the real artifact. The done summary names the check and its result.", principles: ["principle-prove-it-works"] },
+    { text: "Before you report done, verify the change on the real artifact. The done summary names the command you ran to check it and what that command printed. Never claim a check you did not run.", principles: ["principle-prove-it-works"] },
     { text: "Make small commits, and verify each one before the next.", principles: ["principle-sequence-verifiable-units"] },
     { text: "Write a comment only for a reason that the code cannot show.", principles: ["principle-minimize-reader-load"] },
     { text: "Make reversible choices yourself. Report needs_decision only for a product, scope, or destructive choice.", principles: ["principle-never-block-on-the-human"] },

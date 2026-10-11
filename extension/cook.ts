@@ -14,7 +14,7 @@ export function cookContract(spec: TaskSpec): string {
     `Work only in ${spec.worktree} on branch ${spec.branch}. Commit there with clear messages. Do not touch other checkouts.`,
     "Messages from the chef can arrive as user messages during the run. Follow them.",
     "End every run with exactly one chef_report call:",
-    "- done: what changed, the commits, and how you verified it.",
+    "- done: what changed, the commits, and the command you ran to verify it with what it printed.",
     "- needs_decision: a product, scope, or destructive choice you must not make alone. Give the options.",
     "- blocked: the same obstacle twice, or access you do not have.",
     "- failed: you cannot do the task. Say why.",
