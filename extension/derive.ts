@@ -50,7 +50,7 @@ export const EMPTY_RUN: RunFacts = {
 };
 
 // Only the fields chef reads. Value.Check ignores extra fields.
-const SessionLine = Type.Object({ type: Type.Literal("session"), timestamp: Type.String() });
+const TimedMessageLine = Type.Object({ type: Type.Literal("message_end"), message: Type.Object({ timestamp: Type.Number() }) });
 const TurnStartLine = Type.Object({ type: Type.Literal("turn_start") });
 const ToolStartLine = Type.Object({ type: Type.Literal("tool_execution_start"), toolName: Type.String(), args: Type.Unknown() });
 const ToolEndLine = Type.Object({
@@ -80,10 +80,9 @@ export function foldRunLine(facts: RunFacts, line: string): RunFacts {
   } catch {
     return facts;
   }
-  if (Value.Check(SessionLine, parsed)) {
-    const at = Date.parse(parsed.timestamp);
-    return Number.isNaN(at) ? facts : { ...facts, startedAt: millis(at) };
-  }
+  // The session header repeats the session's creation time on every relaunch, so
+  // the run starts at its first timestamped message.
+  if (facts.startedAt === undefined && Value.Check(TimedMessageLine, parsed)) facts = { ...facts, startedAt: millis(parsed.message.timestamp) };
   if (Value.Check(TurnStartLine, parsed)) return { ...facts, turns: facts.turns + 1, activity: { kind: "thinking" } };
   if (Value.Check(ToolStartLine, parsed)) {
     return { ...facts, activity: { kind: "tool", tool: parsed.toolName, detail: activityDetail(parsed.toolName, parsed.args) } };
@@ -241,7 +240,7 @@ export function deriveTask(rec: TaskRecord, live: LiveCooks, now: Millis): TaskV
   if (closed) return view({ kind: "closed", at: millis(closed.at), discarded: closed.discarded });
   const pid = live.get(rec.spec.sessionId);
   if (pid !== undefined && last?.claimed && !last.facts.settled) {
-    return view({ kind: "cooking", run: last.n, since: last.facts.startedAt ?? now, activity: last.facts.activity });
+    return view({ kind: "cooking", run: last.n, since: last.facts.startedAt ?? last.claimedAt ?? now, activity: last.facts.activity });
   }
   if (launchFailure) {
     if (resumable) return view({ kind: "queued", why: "message" });

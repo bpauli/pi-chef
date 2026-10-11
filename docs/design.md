@@ -167,6 +167,8 @@ The restart prefix is set only when the first tick has notices, and cleared afte
 
 `Kitchen.open()` returns `{ kind: "owner"; kitchen: Kitchen } | { kind: "read-only"; reader: KitchenReader; holder }`. A read-only session has no `dispatch` method to call. The lease is stale when its pid is dead or the pid start time differs. `/chef takeover` replaces a live lease on purpose. The O_EXCL run claim is the hard guard against a double launch. The lease only decides who gets woken.
 
+A read-only session's tick calls `promote()` every second: it takes the lease when it is free or stale and the session becomes the owner, with a Waker and a first tick that may carry the restart prefix. While a live holder keeps the lease, the session stays read-only until `/chef takeover`.
+
 Chef mode persists as a `chef-mode` session entry (`pi.appendEntry`), so a resumed chef session turns chef mode on again in `session_start`.
 
 ## Cook role

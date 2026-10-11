@@ -116,6 +116,14 @@ export class KitchenReader {
     return holderOf(this.store.readLease());
   }
 
+  /** Takes a free or stale lease and returns the owner for this session. Undefined while a live holder keeps it. */
+  async promote(): Promise<Kitchen | undefined> {
+    if (await acquireLease(this.store, this.deps.self, false)) return undefined;
+    const kitchen = new Kitchen(this.deps);
+    await kitchen.cooks.adopt();
+    return kitchen;
+  }
+
   async board(): Promise<Board> {
     const snap = this.snapshot();
     const live = await this.liveCooks(snap.records);

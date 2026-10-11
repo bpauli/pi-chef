@@ -168,6 +168,13 @@ export function installChef(pi: ExtensionAPI): void {
     return last?.type === "custom" && Value.Check(ChefModeEntrySchema, last.data) && last.data.on;
   };
 
+  const wakerFor = (current: ChefSession): Waker =>
+    new Waker((notices) => {
+      const details: WakeDetails = { notices };
+      pi.sendMessage({ customType: "chef-wake", content: formatWake(notices, current.restart), display: true, details }, { triggerTurn: true, deliverAs: "followUp" });
+      current.restart = undefined;
+    });
+
   const open = async (ctx: ExtensionContext, takeover = false): Promise<ChefSession> => {
     if (session && !takeover) return session;
     if (session) close(ctx);
@@ -187,13 +194,7 @@ export function installChef(pi: ExtensionAPI): void {
       lastErrors: new Set(),
     };
     current.timer.unref();
-    if (owner) {
-      current.waker = new Waker((notices) => {
-        const details: WakeDetails = { notices };
-        pi.sendMessage({ customType: "chef-wake", content: formatWake(notices, current.restart), display: true, details }, { triggerTurn: true, deliverAs: "followUp" });
-        current.restart = undefined;
-      });
-    }
+    if (owner) current.waker = wakerFor(current);
     session = current;
     pi.setActiveTools(activeWithChef(true));
     if (!chefModeOn(ctx)) pi.appendEntry("chef-mode", { on: true });
@@ -228,6 +229,15 @@ export function installChef(pi: ExtensionAPI): void {
           board = report.board;
         }
       } else {
+        // The owner quit or died: the first read-only session to find the lease free takes it.
+        const promoted = await s.reader.promote();
+        if (promoted) {
+          s.owner = promoted;
+          s.reader = promoted;
+          s.waker = wakerFor(s);
+          s.firstTick = true;
+          if (ctx.hasUI) ctx.ui.notify("chef: this session now owns the kitchen.", "info");
+        }
         board = await s.reader.board();
       }
       s.firstTick = false;

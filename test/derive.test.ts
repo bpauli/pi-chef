@@ -89,8 +89,8 @@ test("a recorded run that ends with chef_report done yields the report, the star
   const facts = foldAll(lines);
   assert.deepEqual(facts.report, { status: "done", summary: "echoed hello" });
   assert.equal(facts.settled, true);
-  const header = JSON.parse(lines[0]!) as { timestamp: string };
-  assert.equal(facts.startedAt, Date.parse(header.timestamp));
+  const firstMessage = lines.map((l) => (l ? (JSON.parse(l) as { type: string; message?: { timestamp?: number } }) : undefined)).find((e) => e?.type === "message_end" && e.message?.timestamp !== undefined);
+  assert.equal(facts.startedAt, firstMessage?.message?.timestamp);
   assert.equal(facts.turns, 2);
 });
 
