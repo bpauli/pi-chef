@@ -19,15 +19,16 @@ import {
   runNo,
 } from "./domain.ts";
 
+export type Verdict = { kind: "report"; report: CookReport } | { kind: "provider-error"; message: string };
+
 export interface RunFacts {
   startedAt: Millis | undefined;
   lastAt: Millis | undefined;
   settled: boolean;
   prompted: boolean;
   activity: Activity;
-  report: CookReport | undefined;
+  verdict: Verdict | undefined;
   finalText: string | undefined;
-  providerError: string | undefined;
 }
 
 export const EMPTY_RUN: RunFacts = {
@@ -36,9 +37,8 @@ export const EMPTY_RUN: RunFacts = {
   settled: false,
   prompted: false,
   activity: { kind: "starting" },
-  report: undefined,
+  verdict: undefined,
   finalText: undefined,
-  providerError: undefined,
 };
 
 const TimedMessageLine = Type.Object({ type: Type.Literal("message_end"), message: Type.Object({ timestamp: Type.Number() }) });
@@ -81,7 +81,7 @@ export function foldRunLine(facts: RunFacts, line: string): RunFacts {
   if (Value.Check(ToolEndLine, parsed)) {
     const content = parsed.result.structuredContent;
     const isReport = parsed.toolName === "chef_report" && !parsed.isError && Value.Check(CookReportSchema, content);
-    return isReport ? { ...facts, activity: { kind: "thinking" }, report: content, providerError: undefined } : { ...facts, activity: { kind: "thinking" } };
+    return isReport ? { ...facts, activity: { kind: "thinking" }, verdict: { kind: "report", report: content } } : { ...facts, activity: { kind: "thinking" } };
   }
   if (Value.Check(AssistantEndLine, parsed)) {
     const { message } = parsed;
@@ -91,8 +91,7 @@ export function foldRunLine(facts: RunFacts, line: string): RunFacts {
       ...facts,
       lastAt: message.timestamp === undefined ? facts.lastAt : millis(message.timestamp),
       finalText: text || facts.finalText,
-      providerError: failed ? (message.errorMessage ?? "provider error") : undefined,
-      report: failed ? undefined : facts.report,
+      verdict: failed ? { kind: "provider-error", message: message.errorMessage ?? "provider error" } : facts.verdict?.kind === "report" ? facts.verdict : undefined,
     };
   }
   if (Value.Check(UserEndLine, parsed)) return { ...facts, prompted: true };
@@ -223,14 +222,14 @@ export function outcomeOf(run: RunRecord, stopped: boolean): Outcome {
     const tail = errTail(run.stderrTail);
     return { kind: "failed", reason: tail ? `cook exited before settling: ${tail}` : "cook exited before settling" };
   }
-  if (facts.report) {
-    const { status, summary } = facts.report;
+  if (facts.verdict?.kind === "report") {
+    const { status, summary } = facts.verdict.report;
     if (status === "done") return { kind: "done", summary, reported: true };
     if (status === "needs_decision") return { kind: "needs_decision", question: summary };
     if (status === "blocked") return { kind: "blocked", reason: summary };
     return { kind: "failed", reason: summary };
   }
-  if (facts.providerError !== undefined) return { kind: "failed", reason: facts.providerError };
+  if (facts.verdict?.kind === "provider-error") return { kind: "failed", reason: facts.verdict.message };
   if (stopped) return { kind: "stopped" };
   return { kind: "done", summary: facts.finalText ?? "(no final text)", reported: false };
 }

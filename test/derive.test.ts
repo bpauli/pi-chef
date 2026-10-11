@@ -60,7 +60,7 @@ function record(over: Partial<TaskRecord> = {}): TaskRecord {
   return { spec: spec(), events: [], runs: [], pendingAt: [], worktreeExists: true, ...over };
 }
 
-const settledDone = (summary = "ok"): RunFacts => ({ ...EMPTY_RUN, settled: true, prompted: true, startedAt: millis(500), report: { status: "done", summary } });
+const settledDone = (summary = "ok"): RunFacts => ({ ...EMPTY_RUN, settled: true, prompted: true, startedAt: millis(500), verdict: { kind: "report", report: { status: "done", summary } } });
 const live = (sid = "sid-1", pid = 4242): Map<string, Pid> => new Map([[sid, pid as Pid]]);
 const none = new Map<string, Pid>();
 
@@ -98,7 +98,7 @@ test("slugProjectName refuses a name with no letters or digits and asks for an e
 test("a recorded run that ends with chef_report done yields the report, the start time, and settled", () => {
   const lines = fixture("done");
   const facts = foldAll(lines);
-  assert.deepEqual(facts.report, { status: "done", summary: "echoed hello" });
+  assert.deepEqual(facts.verdict, { kind: "report", report: { status: "done", summary: "echoed hello" } });
   assert.equal(facts.settled, true);
   const firstMessage = lines.map((l) => (l ? (JSON.parse(l) as { type: string; message?: { timestamp?: number } }) : undefined)).find((e) => e?.type === "message_end" && e.message?.timestamp !== undefined);
   assert.equal(facts.startedAt, firstMessage?.message?.timestamp);
@@ -123,23 +123,21 @@ test("a run's start time is its first timestamped message, not the session heade
 
 test("a recorded needs_decision report is read from the tool_execution_end structuredContent", () => {
   const facts = foldAll(fixture("needs-decision"));
-  assert.deepEqual(facts.report, { status: "needs_decision", summary: "cookie or bearer token?" });
+  assert.deepEqual(facts.verdict, { kind: "report", report: { status: "needs_decision", summary: "cookie or bearer token?" } });
   assert.equal(facts.settled, true);
 });
 
 test("a recorded run without chef_report keeps the final assistant text and no report", () => {
   const facts = foldAll(fixture("no-report"));
-  assert.equal(facts.report, undefined);
+  assert.equal(facts.verdict, undefined);
   assert.equal(facts.finalText, "finished without a report");
-  assert.equal(facts.providerError, undefined);
   assert.equal(facts.settled, true);
 });
 
-test("a recorded provider failure after retries yields providerError and settled", () => {
+test("a recorded provider failure after retries yields a provider-error verdict and settled", () => {
   const facts = foldAll(fixture("provider-error"));
-  assert.equal(facts.providerError, "Connection error.");
+  assert.deepEqual(facts.verdict, { kind: "provider-error", message: "Connection error." });
   assert.equal(facts.settled, true);
-  assert.equal(facts.report, undefined);
 });
 
 test("the later of a chef_report and a provider error in stream order decides the outcome", () => {
@@ -155,8 +153,8 @@ test("the later of a chef_report and a provider error in stream order decides th
 test("a chef_report with isError true or a wrong status is not a report", () => {
   const bad = JSON.stringify({ type: "tool_execution_end", toolName: "chef_report", isError: true, result: { structuredContent: { status: "done", summary: "x" } } });
   const wrong = JSON.stringify({ type: "tool_execution_end", toolName: "chef_report", isError: false, result: { structuredContent: { status: "maybe", summary: "x" } } });
-  assert.equal(foldRunLine(EMPTY_RUN, bad).report, undefined);
-  assert.equal(foldRunLine(EMPTY_RUN, wrong).report, undefined);
+  assert.equal(foldRunLine(EMPTY_RUN, bad).verdict, undefined);
+  assert.equal(foldRunLine(EMPTY_RUN, wrong).verdict, undefined);
 });
 
 test("message_update lines, non-JSON lines, and torn lines leave the facts unchanged", () => {
@@ -203,7 +201,7 @@ test("a dead process without agent_settled after a stop event is stopped, not fa
 });
 
 test("needs_decision, blocked, and failed reports map to their outcomes with the summary text", () => {
-  const of = (status: "needs_decision" | "blocked" | "failed") => outcomeOf(run(1, { settled: true, report: { status, summary: "why" } }), false);
+  const of = (status: "needs_decision" | "blocked" | "failed") => outcomeOf(run(1, { settled: true, verdict: { kind: "report", report: { status, summary: "why" } } }), false);
   assert.deepEqual(of("needs_decision"), { kind: "needs_decision", question: "why" });
   assert.deepEqual(of("blocked"), { kind: "blocked", reason: "why" });
   assert.deepEqual(of("failed"), { kind: "failed", reason: "why" });
@@ -211,7 +209,7 @@ test("needs_decision, blocked, and failed reports map to their outcomes with the
 
 test("a clean settle without chef_report is done with reported false and the final text", () => {
   assert.deepEqual(outcomeOf(run(1, { settled: true, finalText: "all good" }), false), { kind: "done", summary: "all good", reported: false });
-  assert.deepEqual(outcomeOf(run(1, { settled: true, providerError: "Connection error." }), false), { kind: "failed", reason: "Connection error." });
+  assert.deepEqual(outcomeOf(run(1, { settled: true, verdict: { kind: "provider-error", message: "Connection error." } }), false), { kind: "failed", reason: "Connection error." });
 });
 
 test("a prompt file without a run file is queued as an interrupted launch", () => {
@@ -460,7 +458,7 @@ test("the first wake after a restart starts with the restart line", () => {
 
 test("boardLines fits every line to the width, counts who needs you, and is empty for an empty board", () => {
   const cooking = deriveTask(record({ runs: [run(1, { startedAt: millis(NOW - 240_000), activity: { kind: "tool", tool: "bash", detail: "npm test" } })] }), live(), NOW);
-  const asks = deriveTask(record({ spec: spec({ id: id("web-2") }), runs: [run(1, { settled: true, lastAt: millis(NOW - 60_000), report: { status: "needs_decision", summary: "cookie or bearer token?" } })] }), none, NOW);
+  const asks = deriveTask(record({ spec: spec({ id: id("web-2") }), runs: [run(1, { settled: true, lastAt: millis(NOW - 60_000), verdict: { kind: "report", report: { status: "needs_decision", summary: "cookie or bearer token?" } } })] }), none, NOW);
   const board = { role: "owner" as const, holder: undefined, projects: [], open: [cooking, asks], broken: [], closedCount: 0, cooks: { busy: 1, cap: 3 } };
   const lines = boardLines(board, NOW, 60);
   assert.equal(lines[0], "chef  1/3 cooks  1 needs you");
