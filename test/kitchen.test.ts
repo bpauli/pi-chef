@@ -379,6 +379,33 @@ test("a dispatch whose worktree cannot be created fails at once with the git err
   assert.deepEqual(store.readEvents(view.spec.id).map((e) => e.type), ["launch_failed", "notified"]);
 });
 
+test("a broken task.json or config.json does not stop the tick: the broken task is listed, the config falls back, and healthy tasks run", async () => {
+  const { kitchen, store } = await setup();
+  const badTask = "api-9" as TaskId;
+  mkdirSync(join(store.taskDir(badTask), "runs"), { recursive: true });
+  writeFileSync(join(store.taskDir(badTask), "task.json"), "{ not json");
+  const goodConfig = JSON.stringify({ model: FAKE_MODEL, cookArgs: ["-e", FAKE_PROVIDER] });
+  writeFileSync(join(tk.kitchenDir, "config.json"), '{"maxCooks": "three"}');
+  const report = await kitchen.tick().catch((e: Error) => e);
+  assert.equal(report instanceof Error ? report.message : report.kind, "ok");
+  if (report instanceof Error || report.kind !== "ok") return;
+  assert.deepEqual(report.board.broken.map((b) => b.id), [badTask]);
+  assert.match(report.board.broken[0]!.reason, /not valid JSON/);
+  assert.equal(report.board.cooks.cap, 3, "a bad config falls back to the defaults");
+  assert.equal(report.errors.length, 1);
+  assert.match(report.errors[0]!, /config\.json.*maxCooks/);
+
+  writeFileSync(join(tk.kitchenDir, "config.json"), goodConfig);
+  const view = await kitchen.dispatch({ project: "api", title: "Healthy", brief: REPORT_STEP("done", "ok") });
+  assert.equal(view.state.kind, "cooking");
+  const notice = await waitNotice(kitchen, view.spec.id);
+  assert.deepEqual(notice.outcome, { kind: "done", summary: "ok", reported: true });
+  const quiet = await kitchen.tick();
+  assert.deepEqual(quiet.kind === "ok" && quiet.errors, []);
+  assert.deepEqual(quiet.kind === "ok" && quiet.board.broken.map((b) => b.id), [badTask]);
+  assert.deepEqual(quiet.kind === "ok" && quiet.board.open.map((v) => v.spec.id), [view.spec.id]);
+});
+
 test("a second session opens read-only and cannot dispatch; takeover moves the lease and the old owner loses it", async () => {
   const { kitchen } = await setup();
   const other = await Kitchen.open({ store: new Store(tk.kitchenDir), pi, chefEntry: CHEF_ENTRY, self: self("chef-other") });
