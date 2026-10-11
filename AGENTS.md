@@ -26,6 +26,23 @@ The e2e tests start real Pi processes on `test/fake-model/`, a scripted local mo
 - Comments only for a non-obvious why.
 - No em dash or en dash anywhere. Use a plain dash.
 
+## Principles
+
+This repo follows the [pstack](https://github.com/cursor/plugins/tree/main/pstack) principles. Each one below has a concrete rule here. With pstack installed, read the matching `principle-*` skill before you apply it.
+
+| Principle | Rule in this repo |
+|---|---|
+| Model the domain | Task state and outcome are derived unions in `extension/derive.ts`. Add a variant, not a boolean. |
+| Type system discipline | One discriminated field per state (`claim`, `verdict`, results of `claimRun` and `acquireLease`). Brand ids. No cast that silences the compiler. |
+| Boundary discipline | Kitchen files, run-file lines, and tool parameters are parsed with typebox at the edge. Inside, trust the types. Git refs pass `--end-of-options`. |
+| Separate before serializing shared state | One writer per kitchen file. The cook writes no chef file. Every kitchen mutation runs on the one serialized chain, lease check first. |
+| Make operations idempotent | The tick converges from any crash point. Startup reconciliation is the first tick, not a separate path. A launch claims its run file with O_EXCL. |
+| Foundational thinking | Name the data shape before the logic. Change `docs/design.md` in the same commit as a rule change. |
+| Laziness protocol | Smallest change, flat call chains: tool, then `kitchen.ts`, then one module. No new layer without a deleted branch. |
+| Test behavior, not implementation | Reproduce a defect with a failing test first. Name the test after the behavior it proves. |
+| Build the lever | The fake model (`test/fake-model/`) drives real Pi processes offline. Prove a Pi behavior with a probe, not a guess. |
+| Prove it works | Check the real artifact: `npm run check`, plus the chef e2e on an installed Pi binary for launch or lifecycle changes. |
+
 ## Commits
 
 Small, single-purpose commits. The message says what changed and why, and names the checks you ran.
