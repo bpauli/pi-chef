@@ -313,12 +313,9 @@ export class Kitchen extends KitchenReader {
         if (before.state.kind === "cooking") await this.stopNow(rec, live);
         this.store.appendEvent(task, { type: "closed", at: this.now(), discarded: discard });
       }
-      let removal: RemoveResult | { error: string };
-      try {
-        removal = project ? await removeWorktree(project.path, rec.spec.worktree, rec.spec.branch, rec.spec.baseBranch, discarded) : { error: `project ${rec.spec.project} is not registered` };
-      } catch (e) {
-        removal = { error: errorMessage(e) };
-      }
+      const removal = project
+        ? await removeWorktree(project.path, rec.spec.worktree, rec.spec.branch, rec.spec.baseBranch, discarded).catch((e: unknown) => ({ error: errorMessage(e) }))
+        : { error: `project ${rec.spec.project} is not registered` };
       return { view: await viewAfterTick(task), removal };
     });
   }
@@ -342,9 +339,7 @@ export class Kitchen extends KitchenReader {
     const { views, actions } = plan(this.planInput(records, live, cap));
     const notices: Notice[] = [];
     const errors: string[] = [...snap.problems];
-    let launched = false;
     for (const action of actions) {
-      launched ||= action.kind === "launch";
       try {
         if (action.kind === "notify") notices.push(action.notice);
         else await this.execute(action, records.find((r) => r.spec.id === action.task)!);
@@ -352,7 +347,7 @@ export class Kitchen extends KitchenReader {
         errors.push(`${action.kind} ${"task" in action ? action.task : ""}: ${errorMessage(e)}`);
       }
     }
-    const fresh = launched ? plan(this.planInput(this.snapshot().records, await this.cooks.live(), cap)).views : views;
+    const fresh = actions.some((a) => a.kind === "launch") ? plan(this.planInput(this.snapshot().records, await this.cooks.live(), cap)).views : views;
     return { kind: "ok", board: this.boardOf(fresh, snap, "owner", this.holder()), notices, errors };
   }
 
@@ -404,7 +399,7 @@ export class Kitchen extends KitchenReader {
         promptFile: this.store.runPrompt(spec.id, action.run),
         sessionDir: this.store.sessionDir(spec.id),
         taskDir: this.store.taskDir(spec.id),
-        config: this.store.readConfig(),
+        config: this.store.loadConfig().config,
         fds: claim.fds,
       },
       (end) => this.failLaunchIfNoOutput(spec.id, action.run, end),
@@ -420,7 +415,7 @@ export class Kitchen extends KitchenReader {
   }
 
   private requireProject(name: string): Project {
-    const projects = this.store.readProjects();
+    const { projects } = this.store.loadProjects();
     const project = projects.find((p) => p.name === name.trim().toLowerCase());
     if (project) return project;
     const known = projects.map((p) => p.name).join(", ") || "none";

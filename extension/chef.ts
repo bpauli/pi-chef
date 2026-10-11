@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { ChefError, ChefModeEntrySchema, errorMessage, type Millis, type Notice, type NoticeRef, type Pid, type TaskId, type WakeDetails, WakeDetailsSchema, millis, parseTaskId, runNo } from "./domain.ts";
-import { type RestartNote, boardHeader, boardLines, formatAge, formatWake, outcomeText, plural, queuePosition, stateText, statusText } from "./derive.ts";
+import { type RestartNote, boardHeader, outcomeDetail, boardLines, formatAge, formatWake, outcomeText, plural, queuePosition, stateText, statusText } from "./derive.ts";
 import { piInvocation } from "./cooks.ts";
 import { Kitchen, type KitchenReader, type TaskResult, lostError } from "./kitchen.ts";
 import { Store, kitchenDir } from "./store.ts";
@@ -86,10 +86,14 @@ export class Waker {
     this.cap ??= this.clock.setTimeout(() => this.flush(), this.timing.maxWaitMs);
   }
 
-  private flush(): void {
+  private clearTimers(): void {
     if (this.quiet) this.clock.clearTimeout(this.quiet);
     if (this.cap) this.clock.clearTimeout(this.cap);
     this.quiet = this.cap = undefined;
+  }
+
+  private flush(): void {
+    this.clearTimers();
     const notices = [...this.pending.values()];
     this.pending.clear();
     for (const n of notices) this.inFlight.add(noticeKey(n));
@@ -108,9 +112,7 @@ export class Waker {
   }
 
   dispose(): void {
-    if (this.quiet) this.clock.clearTimeout(this.quiet);
-    if (this.cap) this.clock.clearTimeout(this.cap);
-    this.quiet = this.cap = undefined;
+    this.clearTimers();
     this.pending.clear();
     this.inFlight.clear();
   }
@@ -273,10 +275,9 @@ export function installChef(pi: ExtensionAPI): void {
     return session.reader;
   };
   const owner = (): Kitchen => {
-    const s = session;
-    if (!s) throw new ChefError("Chef mode is off. Run /chef, or start pi with --chef.");
-    if (!s.owner) throw lostError(s.reader.holder());
-    return s.owner;
+    const r = reader();
+    if (!session?.owner) throw lostError(r.holder());
+    return session.owner;
   };
   const task = (raw: string): TaskId => parseTaskId(raw, reader().taskIds());
   const text = (t: string) => ({ content: [{ type: "text" as const, text: t }], details: undefined });
@@ -437,17 +438,12 @@ async function boardText(reader: KitchenReader): Promise<string> {
   return [projects, "", ...lines, closed].filter((l, i, all) => l !== "" || i < all.length - 1).join("\n");
 }
 
-const RESULT_MAX = 4000;
-const BODY_MIN = 200;
-const BODY_MAX = 2000;
-const DIFFSTAT_RESERVE = 400;
-const PART_BREAKS = 4;
-const CUT_MARK = " [cut]";
-const CUT_MIN = 20;
+const RESULT = { max: 4000, bodyMin: 200, bodyMax: 2000, diffstatReserve: 400, partBreaks: 4 };
+const CUT = { mark: " [cut]", min: 20 };
 
 function cut(text: string, max: number): string {
   if (text.length <= max) return text;
-  return max < CUT_MIN ? "" : `${text.slice(0, max - CUT_MARK.length)}${CUT_MARK}`;
+  return max < CUT.min ? "" : `${text.slice(0, max - CUT.mark.length)}${CUT.mark}`;
 }
 
 export function resultText(r: TaskResult, at: Millis): string {
@@ -458,7 +454,7 @@ export function resultText(r: TaskResult, at: Millis): string {
   let body = "";
   if (state.kind === "idle") {
     const o = state.outcome;
-    const raw = o.kind === "done" ? o.summary : o.kind === "needs_decision" ? o.question : o.kind === "stopped" ? "" : o.reason;
+    const raw = outcomeDetail(o);
     if (raw) body = `${o.kind === "needs_decision" ? "Question" : o.kind === "done" ? "Summary" : "Reason"}: ${raw.trim()}`;
   }
   let where: string;
@@ -471,8 +467,8 @@ export function resultText(r: TaskResult, at: Millis): string {
     where = `Worktree ${spec.worktree} is gone. Branch ${spec.branch} may still exist in ${r.project?.path ?? "the repository"}.`;
   }
   const transcript = r.transcript ? `Transcript: ${r.transcript}` : "";
-  const fixed = head.length + where.length + transcript.length + PART_BREAKS;
-  const bodyText = cut(body, Math.max(BODY_MIN, Math.min(BODY_MAX, RESULT_MAX - fixed - DIFFSTAT_RESERVE)));
-  const diffText = cut(r.git ? r.diffstat : "", Math.max(0, RESULT_MAX - fixed - bodyText.length - 1));
+  const fixed = head.length + where.length + transcript.length + RESULT.partBreaks;
+  const bodyText = cut(body, Math.max(RESULT.bodyMin, Math.min(RESULT.bodyMax, RESULT.max - fixed - RESULT.diffstatReserve)));
+  const diffText = cut(r.git ? r.diffstat : "", Math.max(0, RESULT.max - fixed - bodyText.length - 1));
   return [head, bodyText, where, diffText, transcript].filter(Boolean).join("\n");
 }

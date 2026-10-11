@@ -147,15 +147,7 @@ export class Store {
     }
   }
 
-  readConfig(): Config {
-    return this.loadConfig().config;
-  }
-
-  readProjects(): Project[] {
-    return this.loadProjects().projects;
-  }
-
-  private loadProjects(): { projects: Project[]; problems: string[] } {
+  loadProjects(): { projects: Project[]; problems: string[] } {
     const dir = join(this.dir, "projects");
     if (!existsSync(dir)) return { projects: [], problems: [] };
     const projects: Project[] = [];
@@ -408,11 +400,8 @@ export class Store {
 export class RunTails {
   private readonly tails = new Map<string, RunTail>();
   get(path: string): RunTail {
-    let tail = this.tails.get(path);
-    if (!tail) {
-      tail = new RunTail(path);
-      this.tails.set(path, tail);
-    }
+    const tail = this.tails.get(path) ?? new RunTail(path);
+    this.tails.set(path, tail);
     return tail;
   }
   forget(pathPrefix: string): void {

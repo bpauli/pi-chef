@@ -141,13 +141,13 @@ test("moveToHandled tolerates a message the cook already moved", () => {
 test("loadConfig: a missing file gives defaults, a wrong type gives defaults plus an error that names the field", () => {
   withDir((dir) => {
     const store = new Store(dir);
-    assert.deepEqual(store.readConfig(), { maxCooks: 3, model: undefined, thinking: undefined, cookArgs: [] });
+    assert.deepEqual(store.loadConfig().config, { maxCooks: 3, model: undefined, thinking: undefined, cookArgs: [] });
     writeFileSync(join(dir, "config.json"), JSON.stringify({ maxCooks: "three" }));
     const bad = store.loadConfig();
     assert.deepEqual(bad.config, { maxCooks: 3, model: undefined, thinking: undefined, cookArgs: [] });
     assert.match(bad.error ?? "", /config\.json is invalid at \/maxCooks/);
     writeFileSync(join(dir, "config.json"), JSON.stringify({ maxCooks: 1, cookArgs: ["-e", "x.ts"] }));
-    assert.deepEqual(store.readConfig(), { maxCooks: 1, model: undefined, thinking: undefined, cookArgs: ["-e", "x.ts"] });
+    assert.deepEqual(store.loadConfig().config, { maxCooks: 1, model: undefined, thinking: undefined, cookArgs: ["-e", "x.ts"] });
   });
 });
 
@@ -158,7 +158,7 @@ test("addProject is idempotent for the same path and refuses the same name for a
     assert.deepEqual(store.addProject(p), p);
     assert.deepEqual(store.addProject({ ...p, addedAt: millis(2) }), p);
     assert.throws(() => store.addProject({ ...p, path: "/other" }), ChefError);
-    assert.deepEqual(store.readProjects(), [p]);
+    assert.deepEqual(store.loadProjects().projects, [p]);
   });
 });
 

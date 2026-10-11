@@ -434,8 +434,10 @@ function needsYou(view: TaskView): boolean {
 function detailOf(view: TaskView): string {
   const s = view.state;
   if (s.kind === "cooking") return activityText(s.activity);
-  if (s.kind !== "idle") return "";
-  const o = s.outcome;
+  return s.kind === "idle" ? outcomeDetail(s.outcome) : "";
+}
+
+export function outcomeDetail(o: Outcome): string {
   return o.kind === "done" ? o.summary : o.kind === "needs_decision" ? o.question : o.kind === "stopped" ? "" : o.reason;
 }
 
