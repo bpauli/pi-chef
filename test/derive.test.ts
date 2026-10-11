@@ -261,6 +261,12 @@ test("a task with no runs and a stop event is idle(stopped), and a newer message
   assert.deepEqual(resumed, { kind: "queued", why: "message" });
 });
 
+test("a message posted in the same millisecond as the stop resumes the task: the chain wrote the stop first", () => {
+  const events: TaskEvent[] = [{ type: "stop", at: 5000, run: 1 }];
+  assert.deepEqual(deriveTask(record({ events, runs: [run(1, { settled: false })], pendingAt: [millis(5000)] }), none, NOW).state, { kind: "queued", why: "message" });
+  assert.deepEqual(deriveTask(record({ events, runs: [run(1, { settled: false })], pendingAt: [millis(4999)] }), none, NOW).state.kind, "idle");
+});
+
 test("a stop that names the next run holds an idle task that has pending messages", () => {
   const events: TaskEvent[] = [{ type: "stop", at: 5000, run: 2 }];
   const rec = record({ events, runs: [run(1, settledDone())], pendingAt: [millis(4000)] });

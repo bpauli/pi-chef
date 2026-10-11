@@ -208,6 +208,30 @@ test("stop ends a running cook as stopped with no notice, and chef_send resumes 
   assert.deepEqual(notice.outcome, { kind: "done", summary: "resumed", reported: true });
 });
 
+test("a message sent right after a stop is not read by the dying cook and restarts the task on run 2", async () => {
+  const { kitchen, store } = await setup();
+  const view = await kitchen.dispatch({ project: "api", title: "Long", brief: `STEP bash: sleep 60\n${REPORT_STEP("done", "resumed")}` });
+  await until("cook is inside bash", async () => {
+    const v = await waitState(kitchen, view.spec.id, "cooking", 5000);
+    return v.state.kind === "cooking" && v.state.activity.kind === "tool" ? v : undefined;
+  });
+  await kitchen.stop(view.spec.id);
+  const delivery = await kitchen.send(view.spec.id, "carry on");
+  assert.ok(delivery.kind === "after-stop" || delivery.kind === "relaunched", `got ${delivery.kind}`);
+  const whereIsTheMessage = () => {
+    const inbox = store.inboxDir(view.spec.id);
+    const run1 = readFileSync(store.runFile(view.spec.id, runNo(1)), "utf8");
+    return `pending=${JSON.stringify(readdirSync(inbox).filter((f) => f.endsWith(".msg")))} handled=${JSON.stringify(readdirSync(join(inbox, "handled")))} runs=${JSON.stringify(runFiles(store, view.spec.id))} run1 has message=${run1.includes("carry on")} events=${JSON.stringify(store.readEvents(view.spec.id))}`;
+  };
+  const notice = await waitNotice(kitchen, view.spec.id, 20_000).catch((e: Error) => {
+    throw new Error(`${e.message}; ${whereIsTheMessage()}`);
+  });
+  assert.equal(notice.run, 2);
+  assert.deepEqual(notice.outcome, { kind: "done", summary: "resumed", reported: true });
+  assert.match(store.readPrompt(view.spec.id, runNo(2)) ?? "", /carry on/, "the owner, not the dying cook, took the message");
+  assert.deepEqual(store.readEvents(view.spec.id).map((e) => e.type), ["stop", "notified"]);
+});
+
 test("close refuses unlanded work, then succeeds after a merge and removes the worktree and branch", async () => {
   const { kitchen, store, repos } = await setup();
   const view = await kitchen.dispatch({ project: "api", title: "Add c", brief: `${COMMIT_STEP("c.txt")}\n${REPORT_STEP("done", "added c")}` });
@@ -363,7 +387,8 @@ test("a cook that exits before its first output line is a failed launch with the
   const run2 = readFileSync(store.runFile(view.spec.id, runNo(2)), "utf8");
   assert.match(run2, /# Add a/, "the brief travels with the retry since run 1 never delivered it");
   assert.match(run2, /retry/);
-  assert.deepEqual(store.readEvents(view.spec.id).map((e) => e.type), ["launch_failed", "notified", "notified"]);
+  // The exit event and the tick that reads the empty claim race; both derive the same failure, so only the set is fixed.
+  assert.deepEqual(store.readEvents(view.spec.id).map((e) => e.type).sort(), ["launch_failed", "notified", "notified"]);
 });
 
 test("a dispatch whose worktree cannot be created fails at once with the git error and is not retried every tick", async () => {
