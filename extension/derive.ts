@@ -100,9 +100,10 @@ export function foldRunLine(facts: RunFacts, line: string): RunFacts {
 }
 
 const DETAIL_MAX = 60;
+const ArgsRecord = Type.Record(Type.String(), Type.Unknown());
 
 export function activityDetail(tool: string, args: unknown): string {
-  const a = (args ?? {}) as Record<string, unknown>;
+  const a = Value.Check(ArgsRecord, args) ? args : {};
   const pick = tool === "bash" ? a.command : (a.path ?? a.file_path ?? a.pattern);
   const text = typeof pick === "string" ? pick : JSON.stringify(a);
   return oneLine(text ?? "", DETAIL_MAX);

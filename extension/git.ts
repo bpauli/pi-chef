@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { promisify } from "node:util";
-import { ChefError } from "./domain.ts";
+import { ChefError, errorMessage } from "./domain.ts";
 import type { GitFacts } from "./derive.ts";
 
 const run = promisify(execFile);
@@ -12,8 +12,8 @@ async function git(cwd: string, args: string[]): Promise<string> {
     const { stdout } = await run("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
     return stdout.trim();
   } catch (e) {
-    const err = e as { stderr?: string; message: string };
-    throw new ChefError(`git ${args.join(" ").slice(0, 120)} failed: ${(err.stderr || err.message).trim().slice(0, 400)}`);
+    const stderr = e instanceof Error && "stderr" in e && typeof e.stderr === "string" ? e.stderr : "";
+    throw new ChefError(`git ${args.join(" ").slice(0, 120)} failed: ${(stderr || errorMessage(e)).trim().slice(0, 400)}`);
   }
 }
 

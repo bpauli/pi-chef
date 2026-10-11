@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { ChefError, ChefModeEntrySchema, type Millis, type Notice, type NoticeRef, type Pid, type TaskId, type WakeDetails, WakeDetailsSchema, millis, parseTaskId, runNo } from "./domain.ts";
+import { ChefError, ChefModeEntrySchema, errorMessage, type Millis, type Notice, type NoticeRef, type Pid, type TaskId, type WakeDetails, WakeDetailsSchema, millis, parseTaskId, runNo } from "./domain.ts";
 import { type RestartNote, boardHeader, boardLines, formatAge, formatWake, outcomeText, plural, queuePosition, stateText, statusText } from "./derive.ts";
 import { piInvocation } from "./cooks.ts";
 import { Kitchen, type KitchenReader, type TaskResult, lostError } from "./kitchen.ts";
@@ -137,7 +137,7 @@ export function installChef(pi: ExtensionAPI): void {
   pi.registerFlag("chef", { type: "boolean", description: "Open the chef kitchen in this session." });
 
   const activeWithChef = (on: boolean): string[] => {
-    const others = pi.getActiveTools().filter((t) => !(CHEF_TOOLS as readonly string[]).includes(t));
+    const others = pi.getActiveTools().filter((t) => !CHEF_TOOLS.some((c) => c === t));
     return on ? [...others, ...CHEF_TOOLS] : others;
   };
 
@@ -235,7 +235,7 @@ export function installChef(pi: ExtensionAPI): void {
         ctx.ui.setStatus("chef", statusText(board));
       }
     } catch (e) {
-      showErrors(s, ctx, [`tick failed: ${(e as Error).message}`]);
+      showErrors(s, ctx, [`tick failed: ${errorMessage(e)}`]);
     } finally {
       s.ticking = false;
     }

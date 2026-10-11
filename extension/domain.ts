@@ -16,6 +16,9 @@ export const millis = (n: number): Millis => n as Millis;
 
 export class ChefError extends Error {}
 
+export const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+export const isCode = (e: unknown, code: string): boolean => e instanceof Error && "code" in e && e.code === code;
+
 const PROJECT_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
 export function parseProjectName(raw: string): ProjectName {
@@ -50,10 +53,11 @@ export const TASK_ID = /^([a-z0-9][a-z0-9-]*)-(\d+)$/;
 
 export function parseTaskId(raw: string, known: readonly TaskId[]): TaskId {
   const text = raw.trim().toLowerCase();
-  if (known.includes(text as TaskId)) return text as TaskId;
+  const exact = known.find((id) => id === text);
+  if (exact) return exact;
   if (/^\d+$/.test(text)) {
-    const matches = known.filter((id) => id.endsWith(`-${text}`));
-    if (matches.length === 1) return matches[0] as TaskId;
+    const [match, ...others] = known.filter((id) => id.endsWith(`-${text}`));
+    if (match && others.length === 0) return match;
   }
   const list = known.length ? known.join(", ") : "none";
   throw new ChefError(`Unknown task "${raw}". Known tasks: ${list}.`);

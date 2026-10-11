@@ -15,6 +15,7 @@ import {
   type TaskId,
   type TaskSpec,
   type TaskView,
+  errorMessage,
   millis,
   parseModel,
   parseProjectName,
@@ -314,7 +315,7 @@ export class Kitchen extends KitchenReader {
       try {
         removal = project ? await removeWorktree(project.path, rec.spec.worktree, rec.spec.branch, rec.spec.baseBranch, discarded) : { error: `project ${rec.spec.project} is not registered` };
       } catch (e) {
-        removal = { error: (e as Error).message };
+        removal = { error: errorMessage(e) };
       }
       return { view: await viewAfterTick(task), removal };
     });
@@ -346,7 +347,7 @@ export class Kitchen extends KitchenReader {
         if (action.kind === "notify") notices.push(action.notice);
         else await this.execute(action, records.find((r) => r.spec.id === action.task)!);
       } catch (e) {
-        errors.push(`${action.kind} ${"task" in action ? action.task : ""}: ${(e as Error).message}`);
+        errors.push(`${action.kind} ${"task" in action ? action.task : ""}: ${errorMessage(e)}`);
       }
     }
     const fresh = launched ? plan(this.planInput(this.snapshot().records, await this.cooks.live(), cap)).views : views;
@@ -360,7 +361,7 @@ export class Kitchen extends KitchenReader {
         try {
           await this.launch(action, spec);
         } catch (e) {
-          this.store.appendEvent(spec.id, { type: "launch_failed", at: this.now(), run: action.run, reason: (e as Error).message });
+          this.store.appendEvent(spec.id, { type: "launch_failed", at: this.now(), run: action.run, reason: errorMessage(e) });
           throw e;
         }
         return;

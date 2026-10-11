@@ -2,7 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { closeSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename } from "node:path";
 import { promisify } from "node:util";
-import type { Config, Pid, Project, RunNo, TaskSpec } from "./domain.ts";
+import { type Config, type Pid, type Project, type RunNo, type TaskSpec, isCode } from "./domain.ts";
 import type { LiveCooks } from "./derive.ts";
 import type { RunFds } from "./store.ts";
 
@@ -67,7 +67,7 @@ export function alive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (e) {
-    return (e as NodeJS.ErrnoException).code === "EPERM";
+    return isCode(e, "EPERM");
   }
 }
 

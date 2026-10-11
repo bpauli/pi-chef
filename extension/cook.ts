@@ -1,9 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readFileSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { type CookReport, CookReportSchema, type TaskSpec, TaskSpecSchema } from "./domain.ts";
+import { type CookReport, CookReportSchema, type TaskSpec } from "./domain.ts";
 import { ROLE_ENV, SESSION_ENV, TASK_DIR_ENV } from "./cooks.ts";
-import { parseFile } from "./store.ts";
+import { parseSpec } from "./store.ts";
 
 const INBOX_POLL_MS = 300;
 
@@ -30,7 +30,7 @@ export function installCook(pi: ExtensionAPI, env: NodeJS.ProcessEnv): void {
   // without these variables a bash child or a nested pi is never taken for a cook.
   for (const name of [SESSION_ENV, ROLE_ENV, TASK_DIR_ENV]) delete env[name];
   const specPath = join(taskDir, "task.json");
-  const spec = parseFile(TaskSpecSchema, specPath, readFileSync(specPath, "utf8")) as TaskSpec;
+  const spec = parseSpec(specPath, readFileSync(specPath, "utf8"));
   const inbox = join(taskDir, "inbox");
   let timer: NodeJS.Timeout | undefined;
   // A steer lands only inside a turn. Before the first turn it races the print-mode

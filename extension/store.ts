@@ -36,6 +36,8 @@ import {
   type TaskId,
   type TaskSpec,
   TaskSpecSchema,
+  errorMessage,
+  isCode,
   millis,
   runNo,
 } from "./domain.ts";
@@ -68,10 +70,6 @@ const MSG = /^(\d{13})-[0-9a-f]{4}\.msg$/;
 const PROMPT = /^(\d+)\.prompt\.md$/;
 const ERR_TAIL_BYTES = 2048;
 
-function isCode(e: unknown, code: string): boolean {
-  return (e as NodeJS.ErrnoException).code === code;
-}
-
 export function parseFile<T extends TSchema>(schema: T, path: string, raw: string): Static<T> {
   let json: unknown;
   try {
@@ -84,6 +82,11 @@ export function parseFile<T extends TSchema>(schema: T, path: string, raw: strin
     throw new ChefError(`${path} is invalid${first ? ` at ${first.instancePath || "/"}: ${first.message}` : ""}.`);
   }
   return json;
+}
+
+export function parseSpec(path: string, raw: string): TaskSpec {
+  const file = parseFile(TaskSpecSchema, path, raw);
+  return { ...file, id: file.id as TaskId, project: file.project as ProjectName, sessionId: file.sessionId as TaskSpec["sessionId"], createdAt: millis(file.createdAt) };
 }
 
 function writeAtomic(path: string, text: string): void {
@@ -140,7 +143,7 @@ export class Store {
         error: undefined,
       };
     } catch (e) {
-      return { config: DEFAULT_CONFIG, error: (e as Error).message };
+      return { config: DEFAULT_CONFIG, error: errorMessage(e) };
     }
   }
 
@@ -161,7 +164,7 @@ export class Store {
       try {
         projects.push(this.readProjectFile(join(dir, f)));
       } catch (e) {
-        problems.push((e as Error).message);
+        problems.push(errorMessage(e));
       }
     }
     return { projects, problems };
@@ -178,7 +181,7 @@ export class Store {
       try {
         records.push(this.loadRecord(id, tails));
       } catch (e) {
-        broken.push({ id, reason: (e as Error).message });
+        broken.push({ id, reason: errorMessage(e) });
       }
     }
     return { config, projects, records, broken, problems };
@@ -240,8 +243,7 @@ export class Store {
   readSpec(id: TaskId): TaskSpec {
     const path = join(this.taskDir(id), "task.json");
     if (!existsSync(path)) throw new ChefError(`Unknown task "${id}".`);
-    const file = parseFile(TaskSpecSchema, path, readFileSync(path, "utf8"));
-    return { ...file, id: file.id as TaskId, project: file.project as ProjectName, sessionId: file.sessionId as TaskSpec["sessionId"], createdAt: millis(file.createdAt) };
+    return parseSpec(path, readFileSync(path, "utf8"));
   }
 
   appendEvent(id: TaskId, event: TaskEvent): void {
@@ -333,11 +335,7 @@ export class Store {
   }
 
   runBytes(id: TaskId, n: RunNo): number | undefined {
-    try {
-      return statSync(this.runFile(id, n)).size;
-    } catch {
-      return undefined;
-    }
+    return statSync(this.runFile(id, n), { throwIfNoEntry: false })?.size;
   }
 
   releaseEmptyClaim(id: TaskId, n: RunNo): boolean {
