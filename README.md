@@ -64,6 +64,25 @@ Every field is optional. `maxCooks` caps the cooks that run at once (default 3).
 
 The kitchen is plain files. `tasks/<id>/task.json` is the task, `runs/<n>.jsonl` is the cook's full Pi stream for run `n`, `log.jsonl` holds the chef's decisions, and `inbox/` holds messages to the cook. No task state is stored; chef derives it from these files and the live processes on every tick. See `docs/design.md` for the contract and `CONTEXT.md` for the words.
 
+## Principles
+
+The chef and every cook work by the principles of [pstack](https://github.com/cursor/plugins/tree/main/pstack), the agent plugin by Lauren Tan. chef vendors the 24 `principle-*` skills from pstack into `principles/`, under pstack's MIT license (`principles/LICENSE`). `principles/SOURCE.md` names the upstream commit.
+
+chef adds a principles block to the system prompt of two roles:
+
+- A cook gets the cook rules, for example "reproduce a bug first and fix the root cause" and "verify on the real artifact before you report done".
+- The chef gets the chef rules, for example "every brief names the check that proves done" and "a cook's report is not proof". The chef gets the block only while chef mode is on.
+
+Each block also has an index of all 24 principles: the name, when the principle applies, and the absolute path of its file. The model reads a file in full before it applies that principle. A normal Pi session gets no block, and the vendored files are not listed as skills.
+
+To update the vendored files, clone [cursor/plugins](https://github.com/cursor/plugins) and run:
+
+```sh
+node tools/sync-pstack.mjs <path to the cursor/plugins checkout>
+```
+
+The script replaces the vendored principles, copies the license, and writes `principles/SOURCE.md`. A second run changes nothing. Do not edit the files in `principles/` by hand.
+
 ## How chef differs from firstmate
 
 [firstmate](https://github.com/kunchenguid/firstmate) is an agent distro: a repository of bash tools, skills, and a long `AGENTS.md` that turns any coding agent CLI into a supervisor, with workers in tmux windows and a bash watcher that wakes the supervisor through the harness's hook. chef is a Pi package. The differences follow from that:
