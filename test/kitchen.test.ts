@@ -9,7 +9,7 @@ import { ChefError, type Notice, type Pid, type SessionId, type TaskId, millis, 
 import { alive, runsSession, scanCooks, signalCook } from "../extension/cooks.ts";
 import { Kitchen, type KitchenDeps, KitchenReader, type Opened } from "../extension/kitchen.ts";
 import { Store } from "../extension/store.ts";
-import { CHEF_ENTRY, COMMIT_STEP, FAKE_PROVIDER, PI_CLI, REPORT_STEP, SLOW_EXIT, type TempKitchen, git, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
+import { CHEF_ENTRY, COMMIT_STEP, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, SLOW_EXIT, type TempKitchen, git, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
 
 let fake: Awaited<ReturnType<typeof startFakeModel>>;
 let tk: TempKitchen;
@@ -337,6 +337,45 @@ test("a cook killed with SIGKILL derives failed with the stderr tail", async () 
   const notice = await waitNotice(kitchen, view.spec.id);
   assert.equal(notice.outcome.kind, "failed");
   assert.match(notice.outcome.kind === "failed" ? notice.outcome.reason : "", /^cook exited before settling: .*fatal: out of memory$/);
+});
+
+test("a cook that exits before its first output line is a failed launch with the stderr tail, not an endless relaunch, and a send retries it with the brief", async () => {
+  const { kitchen, store } = await setup({ model: "nope/none" });
+  const view = await kitchen.dispatch({ project: "api", title: "Add a", brief: `${COMMIT_STEP("a.txt")}\n${REPORT_STEP("done", "added a.txt")}` });
+  await until("cook exit", async () => ((await scanCooks()).has(view.spec.sessionId) ? undefined : true));
+  const report = await kitchen.tick();
+  const state = report.kind === "ok" ? report.board.open[0]!.state : undefined;
+  assert.deepEqual({ kind: state?.kind, outcome: state?.kind === "idle" ? state.outcome.kind : undefined }, { kind: "idle", outcome: "failed" });
+  const notice = await waitNotice(kitchen, view.spec.id, 10_000);
+  assert.equal(notice.run, 1);
+  assert.match(notice.outcome.kind === "failed" ? notice.outcome.reason : "", /before its first output line: .*Model "nope\/none" not found/);
+  await kitchen.tick();
+  assert.equal(store.runBytes(view.spec.id, runNo(1)), 0);
+  assert.equal(readFileSync(store.runErr(view.spec.id, runNo(1)), "utf8").match(/not found/g)?.length, 1, "one attempt, its diagnostic kept");
+  assert.deepEqual(runFiles(store, view.spec.id), ["1.err", "1.jsonl", "1.prompt.md"]);
+
+  writeFileSync(join(tk.kitchenDir, "config.json"), JSON.stringify({ model: FAKE_MODEL, cookArgs: ["-e", FAKE_PROVIDER] }));
+  assert.deepEqual(await kitchen.send(view.spec.id, "retry"), { kind: "relaunched", run: 2 });
+  const done = await waitNotice(kitchen, view.spec.id);
+  assert.deepEqual(done.outcome, { kind: "done", summary: "added a.txt", reported: true });
+  const run2 = readFileSync(store.runFile(view.spec.id, runNo(2)), "utf8");
+  assert.match(run2, /# Add a/, "the brief travels with the retry since run 1 never delivered it");
+  assert.match(run2, /retry/);
+  assert.deepEqual(store.readEvents(view.spec.id).map((e) => e.type), ["launch_failed", "notified", "notified"]);
+});
+
+test("a dispatch whose worktree cannot be created fails at once with the git error and is not retried every tick", async () => {
+  const { kitchen, store, repos } = await setup();
+  await kitchen.addProject({ path: repos.api, name: "bad", baseBranch: "no-such-branch" });
+  const view = await kitchen.dispatch({ project: "bad", title: "Doomed", brief: "STEP say: hi" });
+  assert.equal(view.state.kind, "idle");
+  assert.match(view.state.kind === "idle" && view.state.outcome.kind === "failed" ? view.state.outcome.reason : "", /no-such-branch/);
+  const notice = await waitNotice(kitchen, view.spec.id, 5000);
+  assert.equal(notice.outcome.kind, "failed");
+  const quiet = await kitchen.tick();
+  assert.deepEqual(quiet.kind === "ok" && quiet.errors, []);
+  assert.equal(existsSync(join(store.taskDir(view.spec.id), "runs")) && readdirSync(join(store.taskDir(view.spec.id), "runs")).length, 0);
+  assert.deepEqual(store.readEvents(view.spec.id).map((e) => e.type), ["launch_failed", "notified"]);
 });
 
 test("a second session opens read-only and cannot dispatch; takeover moves the lease and the old owner loses it", async () => {

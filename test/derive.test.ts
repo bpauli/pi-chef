@@ -52,14 +52,14 @@ function spec(over: Partial<TaskSpec> = {}): TaskSpec {
 }
 
 function run(n: number, facts: Partial<RunFacts>, over: Partial<RunRecord> = {}): RunRecord {
-  return { n: runNo(n), claimed: true, bytes: 100, facts: { ...EMPTY_RUN, ...facts }, stderrTail: "", ...over };
+  return { n: runNo(n), claimed: true, bytes: 100, claimedAt: millis(900), facts: { ...EMPTY_RUN, prompted: true, ...facts }, stderrTail: "", ...over };
 }
 
 function record(over: Partial<TaskRecord> = {}): TaskRecord {
   return { spec: spec(), events: [], runs: [], pendingAt: [], worktreeExists: true, ...over };
 }
 
-const settledDone = (summary = "ok"): RunFacts => ({ ...EMPTY_RUN, settled: true, startedAt: millis(500), report: { status: "done", summary } });
+const settledDone = (summary = "ok"): RunFacts => ({ ...EMPTY_RUN, settled: true, prompted: true, startedAt: millis(500), report: { status: "done", summary } });
 const live = (sid = "sid-1", pid = 4242): Map<string, Pid> => new Map([[sid, pid as Pid]]);
 const none = new Map<string, Pid>();
 
@@ -184,9 +184,52 @@ test("a prompt file without a run file is queued as an interrupted launch", () =
   assert.deepEqual(deriveTask(rec, none, NOW).state, { kind: "queued", why: "interrupted-launch" });
 });
 
-test("an empty run file with no live process is an interrupted launch, not a failure", () => {
+test("an empty run file with no live process and an empty err file is an interrupted launch, not a failure", () => {
   const rec = record({ runs: [run(1, {}, { bytes: 0 })] });
   assert.deepEqual(deriveTask(rec, none, NOW).state, { kind: "queued", why: "interrupted-launch" });
+});
+
+test("an empty run file with no live process and a non-empty err file is a failed launch that used its run number up", () => {
+  const rec = record({ runs: [run(1, { prompted: false }, { bytes: 0, claimedAt: millis(7000), stderrTail: 'Error: Model "nope/none" not found.\n' })] });
+  assert.deepEqual(deriveTask(rec, none, NOW).state, {
+    kind: "idle",
+    run: 1,
+    since: 7000,
+    outcome: { kind: "failed", reason: 'cook exited before its first output line: Error: Model "nope/none" not found.' },
+  });
+  assert.equal(noticeFor(rec, deriveTask(rec, none, NOW))?.run, 1);
+  const retried = record({ ...rec, pendingAt: [millis(8000)] });
+  assert.deepEqual(deriveTask(retried, none, NOW).state, { kind: "queued", why: "message" });
+  assert.deepEqual(plan({ ...base, records: [retried] }).actions, [{ kind: "launch", task: "api-1", run: 2, prompt: "brief", reclaim: false }]);
+  const alive = deriveTask(rec, live(), NOW).state;
+  assert.equal(alive.kind, "cooking", "a live cook that has not written yet is cooking, whatever the err file says");
+});
+
+test("a launch_failed event for the next run derives idle(failed), and a message newer than it relaunches with the brief", () => {
+  const events: TaskEvent[] = [{ type: "launch_failed", at: 6000, run: 1, reason: "git worktree add failed: base branch nope not found" }];
+  const failed = record({ events });
+  assert.deepEqual(deriveTask(failed, none, NOW).state, {
+    kind: "idle",
+    run: 1,
+    since: 6000,
+    outcome: { kind: "failed", reason: "git worktree add failed: base branch nope not found" },
+  });
+  assert.deepEqual(plan({ ...base, records: [failed] }).actions.map((a) => a.kind), ["notify"]);
+  const older = record({ events, pendingAt: [millis(5000)] });
+  assert.equal(deriveTask(older, none, NOW).state.kind, "idle", "a message older than the failure does not retry it");
+  const retried = record({ events, pendingAt: [millis(6500)] });
+  assert.deepEqual(plan({ ...base, records: [retried] }).actions, [{ kind: "launch", task: "api-1", run: 2, prompt: "brief", reclaim: false }]);
+  const afterRun = record({ events: [{ type: "launch_failed", at: 6000, run: 2, reason: "spawn of pi failed: ENOENT" }], runs: [run(1, settledDone())] });
+  assert.deepEqual(deriveTask(afterRun, none, NOW).state.kind, "idle");
+  assert.deepEqual(plan({ ...base, records: [{ ...afterRun, pendingAt: [millis(6500)] }] }).actions, [{ kind: "launch", task: "api-1", run: 3, prompt: "messages", reclaim: false }]);
+});
+
+test("a launch_failed event for a run that started after all is ignored", () => {
+  const events: TaskEvent[] = [{ type: "launch_failed", at: 400, run: 1, reason: "cook exited with code 1 before its first output line" }];
+  const rec = record({ events, runs: [run(1, settledDone("fine"))] });
+  const state = deriveTask(rec, none, NOW).state;
+  assert.deepEqual(state.kind === "idle" && state.outcome, { kind: "done", summary: "fine", reported: true });
+  assert.deepEqual(plan({ ...base, records: [{ ...rec, pendingAt: [millis(9000)] }] }).actions, [{ kind: "launch", task: "api-1", run: 2, prompt: "messages", reclaim: false }]);
 });
 
 test("a pending message turns an idle task into queued(message)", () => {
@@ -243,7 +286,7 @@ test("plan launches the oldest queued tasks first and never more than cap minus 
   const q3 = record({ spec: spec({ id: id("api-3"), sessionId: "s3" as TaskSpec["sessionId"], createdAt: millis(2) }) });
   const { actions } = plan({ ...base, records: [cooking, q2, q3], live: live("s1"), cap: 2 });
   const launches = actions.filter((a) => a.kind === "launch");
-  assert.deepEqual(launches, [{ kind: "launch", task: "api-3", run: 1, reusePrompt: false, reclaim: false }]);
+  assert.deepEqual(launches, [{ kind: "launch", task: "api-3", run: 1, prompt: "brief", reclaim: false }]);
 });
 
 test("plan never launches a task whose session still has a live process", () => {
@@ -257,15 +300,15 @@ test("plan relaunches an interrupted launch with the existing prompt, and reclai
   const emptyClaim = record({ spec: spec({ id: id("api-2"), sessionId: "s2" as TaskSpec["sessionId"] }), runs: [run(1, {}, { bytes: 0 })] });
   const { actions } = plan({ ...base, records: [promptOnly, emptyClaim] });
   assert.deepEqual(actions, [
-    { kind: "launch", task: "api-1", run: 1, reusePrompt: true, reclaim: false },
-    { kind: "launch", task: "api-2", run: 1, reusePrompt: true, reclaim: true },
+    { kind: "launch", task: "api-1", run: 1, prompt: "existing", reclaim: false },
+    { kind: "launch", task: "api-2", run: 1, prompt: "existing", reclaim: true },
   ]);
 });
 
 test("plan relaunches an idle task with a message on the next run number", () => {
   const rec = record({ runs: [run(1, settledDone())], pendingAt: [millis(5)] });
   const { actions } = plan({ ...base, records: [rec] });
-  assert.deepEqual(actions, [{ kind: "launch", task: "api-1", run: 2, reusePrompt: false, reclaim: false }]);
+  assert.deepEqual(actions, [{ kind: "launch", task: "api-1", run: 2, prompt: "messages", reclaim: false }]);
 });
 
 test("a live process of a stopped run gets SIGTERM, then SIGKILL after the grace period", () => {

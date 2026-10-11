@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -182,16 +182,33 @@ test("loadRecord folds the run files, counts pending messages, and skips a torn 
   });
 });
 
-test("loadRecord reads the stderr tail only for a run that has content and did not settle", () => {
+test("loadRecord reads the stderr tail for every claimed run that did not settle, including an empty claim", () => {
   withDir((dir) => {
     const store = new Store(dir);
     store.createTask(spec(store));
     store.writePrompt(id, runNo(1), "p1");
     store.claimRun(id, runNo(1));
     writeFileSync(store.runErr(id, runNo(1)), "Error: boom\n");
-    assert.equal(store.loadRecord(id, new RunTails()).runs[0]!.stderrTail, "");
+    assert.equal(store.loadRecord(id, new RunTails()).runs[0]!.stderrTail, "Error: boom\n");
     appendFileSync(store.runFile(id, runNo(1)), line("turn_start"));
     assert.equal(store.loadRecord(id, new RunTails()).runs[0]!.stderrTail, "Error: boom\n");
+    appendFileSync(store.runFile(id, runNo(1)), line("agent_settled"));
+    assert.equal(store.loadRecord(id, new RunTails()).runs[0]!.stderrTail, "");
+  });
+});
+
+test("a relaunch of the same run appends to the err file instead of erasing the earlier attempt's diagnostic", () => {
+  withDir((dir) => {
+    const store = new Store(dir);
+    store.createTask(spec(store));
+    store.writePrompt(id, runNo(1), "p1");
+    const first = store.claimRun(id, runNo(1))!;
+    writeFileSync(store.runErr(id, runNo(1)), "attempt 1 died\n");
+    assert.equal(store.releaseEmptyClaim(id, runNo(1)), true);
+    const second = store.claimRun(id, runNo(1))!;
+    assert.equal(readFileSync(store.runErr(id, runNo(1)), "utf8"), "attempt 1 died\n");
+    assert.equal(store.runBytes(id, runNo(1)), 0);
+    for (const fd of [first.stdout, first.stderr, second.stdout, second.stderr]) closeSync(fd);
   });
 });
 

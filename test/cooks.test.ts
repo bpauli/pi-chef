@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
+import { closeSync, mkdtempSync, openSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { type Pid, type TaskSpec, millis, parseProjectName, runNo } from "../extension/domain.ts";
-import { CookTable, alive, cookArgv, firstPrompt, followUpPrompt, pidStart, runsSession, signalCook } from "../extension/cooks.ts";
+import { type CookEnd, CookTable, alive, cookArgv, firstPrompt, followUpPrompt, launchCook, pidStart, runsSession, signalCook } from "../extension/cooks.ts";
 
 const spec: TaskSpec = {
   id: "api-1" as TaskSpec["id"],
@@ -49,6 +52,22 @@ test("cookArgv runs the same pi in json print mode on the task session with the 
   ]);
   const own = cookArgv({ ...{ pi: { command: "/bin/pi", args: [] }, chefEntry: "/c", spec: { ...spec, model: "other/model" }, run: runNo(1), promptFile: "/p", sessionDir: "/s", taskDir: "/t", config: { maxCooks: 3, model: "fake/scripted", thinking: undefined, cookArgs: [] }, fds: { stdout: 0, stderr: 0 } } });
   assert.deepEqual(own.slice(own.indexOf("--model"), own.indexOf("--model") + 2), ["--model", "other/model"]);
+});
+
+test("launchCook reports a missing binary through onEnd instead of crashing the process, and closes the claim fds", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "chef-cooks-"));
+  const fds = { stdout: openSync(join(dir, "1.jsonl"), "w"), stderr: openSync(join(dir, "1.err"), "w") };
+  const ends: CookEnd[] = [];
+  const pid = launchCook(
+    { pi: { command: join(dir, "no-such-pi"), args: [] }, chefEntry: "/c", spec: { ...spec, worktree: dir }, run: runNo(1), promptFile: "/p", sessionDir: dir, taskDir: dir, config: { maxCooks: 3, model: undefined, thinking: undefined, cookArgs: [] }, fds },
+    (end) => ends.push(end),
+  );
+  assert.equal(pid, undefined);
+  await settle();
+  assert.equal(ends.length, 1);
+  assert.match(ends[0]!.kind === "error" ? ends[0]!.message : "", /^spawn of no-such-pi failed: .*ENOENT/);
+  assert.throws(() => closeSync(fds.stdout), /EBADF/);
+  rmSync(dir, { recursive: true, force: true });
 });
 
 test("the first prompt frames the brief with the worktree facts, the follow-up prompt carries only the messages", () => {
