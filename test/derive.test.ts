@@ -131,6 +131,16 @@ test("a recorded provider failure after retries yields providerError and settled
   assert.equal(facts.report, undefined);
 });
 
+test("the later of a chef_report and a provider error in stream order decides the outcome", () => {
+  const report = JSON.stringify({ type: "tool_execution_end", toolName: "chef_report", isError: false, result: { structuredContent: { status: "done", summary: "x" } } });
+  const error = JSON.stringify({ type: "message_end", message: { role: "assistant", content: [], errorMessage: "Connection error.", stopReason: "error" } });
+  const settled = JSON.stringify({ type: "agent_settled" });
+  const errorLast = run(1, foldAll([report, error, settled]));
+  assert.deepEqual(outcomeOf(errorLast, false), { kind: "failed", reason: "Connection error." });
+  const reportLast = run(1, foldAll([error, report, settled]));
+  assert.deepEqual(outcomeOf(reportLast, false), { kind: "done", summary: "x", reported: true });
+});
+
 test("a chef_report with isError true or a wrong status is not a report", () => {
   const bad = JSON.stringify({ type: "tool_execution_end", toolName: "chef_report", isError: true, result: { structuredContent: { status: "done", summary: "x" } } });
   const wrong = JSON.stringify({ type: "tool_execution_end", toolName: "chef_report", isError: false, result: { structuredContent: { status: "maybe", summary: "x" } } });
@@ -418,14 +428,16 @@ test("formatWake renders the kitchen update the chef model reads, with the next 
     { task: id("api-7"), title: "Add rate limiter", run: runNo(2), outcome: { kind: "done", summary: "token bucket in limit.go, make test passes.", reported: true } },
     { task: id("web-2"), title: "Fix login", run: runNo(1), outcome: { kind: "needs_decision", question: "cookie or bearer token?" } },
     { task: id("web-3"), title: "Fix search", run: runNo(1), outcome: { kind: "failed", reason: "Connection error." } },
+    { task: id("web-4"), title: "Add w", run: runNo(1), outcome: { kind: "done", summary: "added w.txt", reported: true } },
   ]);
   assert.equal(
     text,
     [
-      "Kitchen update (3):",
+      "Kitchen update (4):",
       '- api-7 "Add rate limiter" is done: token bucket in limit.go, make test passes. Review with chef_result api-7.',
       '- web-2 "Fix login" needs a decision: cookie or bearer token? Answer with chef_send web-2.',
       '- web-3 "Fix search" failed: Connection error. chef_send web-3 to retry, or tell the human.',
+      '- web-4 "Add w" is done: added w.txt. Review with chef_result web-4.',
     ].join("\n"),
   );
 });
