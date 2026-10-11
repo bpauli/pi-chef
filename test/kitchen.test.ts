@@ -366,17 +366,29 @@ test("a cook that exits before its first output line is a failed launch with the
 });
 
 test("a dispatch whose worktree cannot be created fails at once with the git error and is not retried every tick", async () => {
-  const { kitchen, store, repos } = await setup();
-  await kitchen.addProject({ path: repos.api, name: "bad", baseBranch: "no-such-branch" });
-  const view = await kitchen.dispatch({ project: "bad", title: "Doomed", brief: "STEP say: hi" });
+  const { kitchen, store } = await setup();
+  writeFileSync(store.worktreeDir("api-1" as TaskId), "a file where the worktree should go");
+  const view = await kitchen.dispatch({ project: "api", title: "Doomed", brief: "STEP say: hi" });
   assert.equal(view.state.kind, "idle");
-  assert.match(view.state.kind === "idle" && view.state.outcome.kind === "failed" ? view.state.outcome.reason : "", /no-such-branch/);
+  assert.match(view.state.kind === "idle" && view.state.outcome.kind === "failed" ? view.state.outcome.reason : "", /not a directory/);
   const notice = await waitNotice(kitchen, view.spec.id, 5000);
   assert.equal(notice.outcome.kind, "failed");
   const quiet = await kitchen.tick();
   assert.deepEqual(quiet.kind === "ok" && quiet.errors, []);
   assert.equal(existsSync(join(store.taskDir(view.spec.id), "runs")) && readdirSync(join(store.taskDir(view.spec.id), "runs")).length, 0);
   assert.deepEqual(store.readEvents(view.spec.id).map((e) => e.type), ["launch_failed", "notified"]);
+});
+
+test("addProject refuses a base branch that does not exist or starts with a dash, and dispatch refuses a model that starts with a dash", async () => {
+  const { kitchen, store, repos } = await setup();
+  await assert.rejects(kitchen.addProject({ path: repos.api, name: "nope", baseBranch: "no-such-branch" }), (e: unknown) => e instanceof ChefError && /no-such-branch/.test(e.message));
+  await assert.rejects(kitchen.addProject({ path: repos.api, name: "dash", baseBranch: "--output=/tmp/x" }), ChefError);
+  assert.deepEqual(store.readProjects().map((p) => p.name), ["api", "web"]);
+  await assert.rejects(kitchen.dispatch({ project: "api", title: "x", brief: "y", model: "--no-such-flag" }), (e: unknown) => e instanceof ChefError && /model/.test(e.message));
+  assert.deepEqual(store.listTaskIds(), []);
+  git(repos.api, "branch", "release");
+  const p = await kitchen.addProject({ path: repos.api, name: "rel", baseBranch: "release" });
+  assert.equal(p.baseBranch, "release");
 });
 
 test("a broken task.json or config.json does not stop the tick: the broken task is listed, the config falls back, and healthy tasks run", async () => {
