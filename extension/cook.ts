@@ -3,6 +3,7 @@ import { readFileSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { type CookReport, CookReportSchema, type TaskSpec } from "./domain.ts";
 import { ROLE_ENV, SESSION_ENV, TASK_DIR_ENV } from "./cooks.ts";
+import { loadPrinciples, principlesBlock } from "./principles.ts";
 import { parseSpec } from "./store.ts";
 
 const INBOX_POLL_MS = 300;
@@ -56,7 +57,8 @@ export function installCook(pi: ExtensionAPI, env: NodeJS.ProcessEnv): void {
     },
   });
 
-  pi.on("before_agent_start", (event) => ({ systemPrompt: `${event.systemPrompt}\n\n${cookContract(spec)}` }));
+  const contract = `${cookContract(spec)}\n\n${principlesBlock("cook", loadPrinciples())}`;
+  pi.on("before_agent_start", (event) => ({ systemPrompt: `${event.systemPrompt}\n\n${contract}` }));
 
   const poll = () => {
     if (!claimable) return;

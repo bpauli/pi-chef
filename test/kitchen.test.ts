@@ -7,6 +7,7 @@ import { ChefError, type Notice, type Pid, type SessionId, type TaskId, millis, 
 import { alive, runsSession, scanCooks, signalCook } from "../extension/cooks.ts";
 import { boardHeader } from "../extension/derive.ts";
 import { Kitchen, type KitchenDeps, KitchenReader, type Opened } from "../extension/kitchen.ts";
+import { PRINCIPLES_DIR, RULES } from "../extension/principles.ts";
 import { RunTails, Store } from "../extension/store.ts";
 import { CHEF_ENTRY, COMMIT_STEP, FAKE_MODEL, FAKE_PROVIDER, NEVER_EXIT, PI_CLI, REPORT_STEP, SLOW_EXIT, type TempKitchen, git, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
 
@@ -188,6 +189,16 @@ test("the cook's model receives the cook contract in its system prompt", async (
   assert.match(summary, /You are a cook in chef's kitchen: a Pi agent that works alone on task api-1 "Who am I"/);
   assert.match(summary, /End every run with exactly one chef_report call/);
   assert.match(summary, /chef_report/);
+});
+
+test("the cook's model receives the cook principles, with an index of the vendored files, and none of the chef rules", async () => {
+  const { kitchen } = await setup();
+  const view = await kitchen.dispatch({ project: "api", title: "Principles", brief: "STEP echo-system:" });
+  const notice = await waitNotice(kitchen, view.spec.id);
+  const prompt = notice.outcome.kind === "done" ? notice.outcome.summary : "";
+  for (const rule of RULES.cook) assert.ok(prompt.includes(rule.text), `cook rule present: ${rule.text}`);
+  for (const rule of RULES.chef) assert.ok(!prompt.includes(rule.text), `no chef rule: ${rule.text}`);
+  assert.ok(prompt.includes(join(PRINCIPLES_DIR, "principle-fix-root-causes", "SKILL.md")), "the index names the vendored files");
 });
 
 test("stop ends a running cook as stopped with no notice, and chef_send resumes it on run 2", async () => {

@@ -6,6 +6,7 @@ import { StringDecoder } from "node:string_decoder";
 import { after, afterEach, before, test } from "node:test";
 import { TICK_MS, WAKE_TIMING } from "../extension/chef.ts";
 import { scanCooks, signalCook } from "../extension/cooks.ts";
+import { PRINCIPLES_DIR, RULES } from "../extension/principles.ts";
 import { Store } from "../extension/store.ts";
 import { CHEF_ENTRY, COMMIT_STEP, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, type TempKitchen, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
 
@@ -30,6 +31,7 @@ afterEach(async () => {
 
 interface Event {
   type: string;
+  id?: string;
   message?: { role: string; customType?: string; content?: unknown };
   toolName?: string;
   result?: { content?: { type: string; text?: string }[] };
@@ -79,6 +81,60 @@ test("chef tools are absent from a plain session and active with --chef", async 
   assert.match(toolsSection(chef.events), /Never poll cooks/);
   assert.ok(existsSync(join(tk.kitchenDir, "tasks")), "chef mode opened the kitchen");
   assert.equal(existsSync(join(tk.kitchenDir, "pass.lock")), false, "the lease is released at shutdown");
+});
+
+const lastAssistantText = (events: Event[]): string => {
+  const end = events.filter((e) => e.type === "message_end" && e.message?.role === "assistant").at(-1);
+  const content = (end?.message?.content ?? []) as { type: string; text?: string }[];
+  return content.map((c) => c.text ?? "").join("");
+};
+
+const PRINCIPLE_PATH = join(PRINCIPLES_DIR, "principle-prove-it-works", "SKILL.md");
+
+function assertChefPrinciples(prompt: string, on: boolean, when: string): void {
+  for (const rule of RULES.cook) assert.ok(!prompt.includes(rule.text), `${when}: no cook rule in the chef's prompt: ${rule.text}`);
+  if (on) {
+    for (const rule of RULES.chef) assert.ok(prompt.includes(rule.text), `${when}: chef rule present: ${rule.text}`);
+    assert.ok(prompt.includes(PRINCIPLE_PATH), `${when}: the index names the vendored files`);
+  } else {
+    for (const rule of RULES.chef) assert.ok(!prompt.includes(rule.text), `${when}: no chef rule: ${rule.text}`);
+    assert.ok(!prompt.includes(PRINCIPLE_PATH), `${when}: no principle index`);
+  }
+}
+
+test("the chef's model gets the chef principles with --chef and a plain session's model gets none", async () => {
+  tk = tempKitchen();
+  const plain = startPi("json", [], "STEP echo-system:");
+  plain.proc.stdin!.end();
+  assert.equal(await plain.exited, 0);
+  assertChefPrinciples(lastAssistantText(plain.events), false, "plain session");
+
+  const chef = startPi("json", ["--chef"], "STEP echo-system:");
+  chef.proc.stdin!.end();
+  assert.equal(await chef.exited, 0);
+  assertChefPrinciples(lastAssistantText(chef.events), true, "--chef");
+});
+
+test("the chef principles follow /chef on and /chef off in the same session", async () => {
+  tk = tempKitchen();
+  const pi = startPi("rpc", []);
+  const send = (id: string, message: string) => pi.proc.stdin!.write(`${JSON.stringify({ id, type: "prompt", message })}\n`);
+  const answered = (id: string) => until(`response ${id}`, () => (pi.events.some((e) => e.type === "response" && e.id === id) ? true : undefined));
+  const echoAfter = async (id: string, message: string, settled: number) => {
+    send(id, message);
+    await until(`settle ${settled}`, () => (settles(pi.events) >= settled ? true : undefined), 30_000);
+    return lastAssistantText(pi.events);
+  };
+
+  assertChefPrinciples(await echoAfter("p1", "STEP echo-system:\nSTEP echo-system:\nSTEP echo-system:", 1), false, "before /chef");
+  send("on", "/chef");
+  await answered("on");
+  assertChefPrinciples(await echoAfter("p2", "again", 2), true, "after /chef");
+  send("off", "/chef off");
+  await answered("off");
+  assertChefPrinciples(await echoAfter("p3", "again", 3), false, "after /chef off");
+  pi.proc.stdin!.end();
+  assert.equal(await pi.exited, 0);
 });
 
 test("a dispatch leads to exactly one chef-wake that starts a turn, and chef_result reads the landed facts", async () => {

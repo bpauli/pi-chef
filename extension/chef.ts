@@ -8,6 +8,7 @@ import { ChefError, ChefModeEntrySchema, errorMessage, type Millis, type Notice,
 import { type RestartNote, boardHeader, outcomeDetail, boardLines, formatAge, formatWake, outcomeText, plural, queuePosition, stateText, statusText } from "./derive.ts";
 import { piInvocation } from "./cooks.ts";
 import { Kitchen, type KitchenReader, type TaskResult, lostError } from "./kitchen.ts";
+import { loadPrinciples, principlesBlock } from "./principles.ts";
 import { Store, kitchenDir } from "./store.ts";
 
 export const TICK_MS = 1000;
@@ -269,6 +270,8 @@ export function installChef(pi: ExtensionAPI): void {
     void s.owner.markNotified(notices).catch(() => undefined);
   });
   pi.on("agent_settled", () => session?.waker?.settled());
+  const principles = principlesBlock("chef", loadPrinciples());
+  pi.on("before_agent_start", (event) => (session ? { systemPrompt: `${event.systemPrompt}\n\n${principles}` } : undefined));
 
   const reader = (): KitchenReader => {
     if (!session) throw new ChefError("Chef mode is off. Run /chef, or start pi with --chef.");
