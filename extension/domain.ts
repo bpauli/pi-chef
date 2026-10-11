@@ -1,7 +1,5 @@
+import { StringEnum } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
-
-export const stringEnum = <const T extends readonly string[]>(values: T, description?: string) =>
-  Type.Unsafe<T[number]>({ type: "string", enum: [...values], description });
 
 declare const brand: unique symbol;
 type Brand<T, B extends string> = T & { readonly [brand]: B };
@@ -141,7 +139,7 @@ export interface WakeDetails {
 
 export const CookReportSchema = Type.Object(
   {
-    status: stringEnum(["done", "needs_decision", "blocked", "failed"] as const),
+    status: StringEnum(["done", "needs_decision", "blocked", "failed"] as const),
     summary: Type.String({
       description:
         "done: what changed, the commits, how you verified it. needs_decision: the question and the options. blocked or failed: what stopped you and what you tried.",
