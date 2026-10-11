@@ -131,3 +131,52 @@ test("a dispatch leads to exactly one chef-wake that starts a turn, and chef_res
   const lastText = chef.events.filter((e) => e.type === "message_end" && e.message?.role === "assistant").at(-1);
   assert.equal(JSON.stringify(lastText?.message?.content), JSON.stringify([{ type: "text", text: "reviewed" }]));
 });
+
+/** A chef whose turn is busy in bash while its cook finishes, so the wake is queued as a follow-up. */
+async function chefBusyWhileCookFinishes(sleepSeconds: number) {
+  tk = tempKitchen();
+  const repo = makeRepo(tk.home, "api");
+  const script = [
+    `STEP tool chef_add_project ${JSON.stringify({ path: repo })}`,
+    `STEP tool chef_dispatch ${JSON.stringify({ project: "api", title: "Quick", brief: REPORT_STEP("done", "quick") })}`,
+    `STEP bash: sleep ${sleepSeconds}`,
+    "STEP say: done",
+  ].join("\n");
+  const chef = startPi("rpc", ["--chef"]);
+  chef.proc.stdin!.write(`${JSON.stringify({ id: "p1", type: "prompt", message: script })}\n`);
+  const store = new Store(tk.kitchenDir);
+  const sessionId = await until("the task", () => store.listTaskIds().map((id) => store.readSpec(id).sessionId)[0]);
+  await until("the cook's exit", async () => ((await scanCooks()).has(sessionId) ? undefined : true));
+  return { chef, store };
+}
+
+const wakeStarts = (events: Event[]) => events.filter((e) => e.type === "message_start" && e.message?.role === "custom" && e.message.customType === "chef-wake");
+const settles = (events: Event[]) => events.filter((e) => e.type === "agent_settled").length;
+
+test("a wake queued behind a busy chef turn is delivered as a follow-up and marked notified only then", async () => {
+  const { chef, store } = await chefBusyWhileCookFinishes(8);
+  await until("the chef's turn to settle", () => (settles(chef.events) >= 1 ? true : undefined), 60_000);
+  await until("the wake", () => (wakeStarts(chef.events).length ? true : undefined), 15_000);
+  chef.proc.stdin!.end();
+  assert.equal(await chef.exited, 0);
+  const wakes = wakeStarts(chef.events);
+  assert.equal(wakes.length, 1);
+  assert.ok(chef.events.indexOf(wakes[0]!) < chef.events.findIndex((e) => e.type === "agent_settled"), "the follow-up ran inside the busy turn");
+  assert.deepEqual(store.readEvents(store.listTaskIds()[0]!).map((e) => e.type), ["notified"]);
+});
+
+test("a wake that Pi drops from its queue before delivery is derived and sent again after the turn settles", async () => {
+  const { chef, store } = await chefBusyWhileCookFinishes(20);
+  // The waker sends within 5 s of the notice; by now the wake sits in Pi's follow-up queue.
+  await new Promise((ok) => setTimeout(ok, 7000));
+  chef.proc.stdin!.write(`${JSON.stringify({ id: "c1", type: "clear_queue" })}\n`);
+  await until("the chef's turn to settle", () => (settles(chef.events) >= 1 ? true : undefined), 60_000);
+  const firstSettle = chef.events.findIndex((e) => e.type === "agent_settled");
+  await until("the wake", () => (wakeStarts(chef.events).length ? true : undefined), 15_000).catch(() => undefined);
+  chef.proc.stdin!.end();
+  assert.equal(await chef.exited, 0);
+  const wakes = wakeStarts(chef.events);
+  assert.equal(wakes.length, 1, "the dropped wake was derived again and sent once");
+  assert.ok(chef.events.indexOf(wakes[0]!) > firstSettle, "the wake came after the turn it was dropped from");
+  assert.deepEqual(store.readEvents(store.listTaskIds()[0]!).map((e) => e.type), ["notified"]);
+});

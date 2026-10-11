@@ -59,6 +59,34 @@ test("the waker delivers after the cap even while notices keep arriving, and a r
   assert.deepEqual(tasks(wakes[1]), ["t-5"]);
 });
 
+test("a notice stays in flight after its wake is sent, so a re-derived notice is not sent twice until the wake is confirmed", () => {
+  const clock = fakeClock();
+  const wakes: Notice[][] = [];
+  const waker = new Waker((n) => wakes.push(n), { quietMs: 100, maxWaitMs: 500 }, clock);
+  waker.offer([notice("api-1")]);
+  clock.advance(100);
+  assert.equal(wakes.length, 1);
+  waker.offer([notice("api-1")]);
+  clock.advance(1000);
+  assert.equal(wakes.length, 1, "the same task#run is in flight and not sent again");
+  waker.delivered([notice("api-1")]);
+  waker.offer([notice("api-1")]);
+  clock.advance(100);
+  assert.equal(wakes.length, 2, "after confirmation the notice is free to be offered again");
+});
+
+test("a wake that was not confirmed when the agent settled was dropped by Pi, so the re-derived notice is sent again", () => {
+  const clock = fakeClock();
+  const wakes: Notice[][] = [];
+  const waker = new Waker((n) => wakes.push(n), { quietMs: 100, maxWaitMs: 500 }, clock);
+  waker.offer([notice("api-1")]);
+  clock.advance(100);
+  waker.settled();
+  waker.offer([notice("api-1")]);
+  clock.advance(100);
+  assert.deepEqual(wakes.map((w) => w.map((n) => n.task)), [["api-1"], ["api-1"]]);
+});
+
 test("dispose drops pending notices so nothing is delivered after shutdown", () => {
   const clock = fakeClock();
   const wakes: Notice[][] = [];
