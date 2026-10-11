@@ -28,7 +28,7 @@ export function parseProjectName(raw: string): ProjectName {
 
 export function parseModel(raw: string): string {
   const model = raw.trim();
-  if (!model || model.startsWith("-")) throw new ChefError(`"${raw}" is not a model. Pass provider/model, for example anthropic/claude-sonnet-5-5.`);
+  if (!model) throw new ChefError(`"${raw}" is not a model. Pass provider/model, for example anthropic/claude-sonnet-5-5.`);
   return model;
 }
 
@@ -106,8 +106,8 @@ export type TaskEvent = Static<typeof TaskEventSchema>;
 export const ConfigSchema = Type.Object(
   {
     maxCooks: Type.Optional(Type.Integer({ minimum: 1 })),
-    model: Type.Optional(Type.String({ description: "cook model, provider/id", pattern: "^[^-]" })),
-    thinking: Type.Optional(Type.String({ pattern: "^[^-]" })),
+    model: Type.Optional(Type.String({ description: "cook model, provider/id" })),
+    thinking: Type.Optional(Type.String()),
     cookArgs: Type.Optional(Type.Array(Type.String(), { description: "extra pi args for every cook" })),
   },
   { additionalProperties: false },
