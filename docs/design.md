@@ -181,6 +181,21 @@ Chef mode persists as a `chef-mode` session entry (`pi.appendEntry`), so a resum
 
 Double loading is guarded with `globalThis[Symbol.for("chef.loaded")]`. The guard is cleared on `session_shutdown`, so `/reload` registers the tools again.
 
+## herdr tabs
+
+When the chef runs inside herdr (`HERDR_ENV=1` and `HERDR_WORKSPACE_ID` at activation), the owner session opens one herdr tab per cooking task, so the human can watch the cook work. The tab is a watch pane only. The cook stays a detached `pi --mode json -p` process, and the human still steers through the chef. A read-only session does nothing with tabs, so the tabs have one writer.
+
+The tab runs `exec node <extension>/watch.ts <task dir>` in the task worktree, with the label `cook <task id>` and `--no-focus`. The viewer (`watch.ts`) prints the highest `runs/<n>.jsonl` from its start, then follows the appended bytes every 250 ms. It shows the prompt and steer messages, the streamed assistant text, one line per tool call with its key argument, a dim tail of the tool output, provider errors in red, the `chef_report` status and summary, and the run end. A newer run file gets a separator line with its run number. The viewer exits 0 when `log.jsonl` has a `closed` event, and herdr then closes the tab. The viewer decides nothing. It runs under plain Node, so it imports node builtins only and narrows each line with small hand guards.
+
+`extension/herdr.ts` is the only module that calls herdr. `CookTabs` keeps one in-memory record per open task: the last run seen cooking, the pane of its tab, and the last state reported to that pane. Nothing is stored on disk. On each tick, after the kitchen tick, `CookTabs.sync` gets the board views:
+
+- A run seen cooking for the first time is a transition. Only a transition, and the first sync after activation or promotion, lists the live tabs (`tab list` joined with `pane list`). A task with a live `cook <id>` tab adopts it. A transition with no live tab opens one. A chef restart adopts the tabs of the last chef.
+- A tab is opened at most once per run. When the human closes a tab, the next report gets `pane_not_found`, the record forgets the pane, and no tab opens again for that run. The next run opens a new one.
+- A task with a known pane gets `pane report-agent --source chef --agent cook` when its report changes: cooking is `working` with the current activity, idle with done or stopped is `idle`, idle with needs decision, blocked, or failed is `blocked` with the outcome text. A queued task gets no report.
+- A run that starts and settles between two ticks is never seen cooking and gets no tab.
+
+Herdr calls are async (`execFile`) with the binary from `HERDR_BIN_PATH`, else `herdr`. Every reply is parsed with typebox. A herdr error never throws into the tick: it becomes an error line of the tick, shown by the same dedup as the kitchen errors.
+
 ## Principles
 
 `principles/<name>/SKILL.md` holds the 24 pstack principle skills, vendored by `tools/sync-pstack.mjs` (MIT, `principles/LICENSE`, upstream commit in `principles/SOURCE.md`). These files are the single source. `loadPrinciples` parses `name` and `description` from each frontmatter with typebox, and a file without them is a load error. `principlesBlock(role, principles)` is pure. It returns a frame, the always-on rules of that role (`RULES` in `extension/principles.ts`, each rule names its principles), and an index derived from the files: one line per principle with its name, its description, and its absolute path. The block ends with "Before you apply a principle, read its file in full."
@@ -202,7 +217,7 @@ Two other deliveries were rejected:
 
 ## Module map
 
-About 2.8k lines of source. Any flow passes through at most three files: tool, then `kitchen.ts`, then one of `store`, `cooks`, `git`, `derive`.
+About 3k lines of source. Any flow passes through at most three files: tool, then `kitchen.ts`, then one of `store`, `cooks`, `git`, `derive`.
 
 | Module | Owns |
 |---|---|
@@ -213,9 +228,11 @@ About 2.8k lines of source. Any flow passes through at most three files: tool, t
 | `cooks.ts` | Launch argv, spawn, the liveness map, group signals, prompt text. |
 | `git.ts` | Worktree ensure and remove, landed facts, diffstat. |
 | `kitchen.ts` | The deep module: the seven operations plus `tick`. It imports no Pi types. |
-| `chef.ts` | The Pi shell: tools as one-call adapters, `/chef`, the widget, the `Waker`, activation. |
+| `chef.ts` | The Pi shell: tools as one-call adapters, `/chef`, the widget, the `Waker`, the cook tabs, activation. |
 | `cook.ts` | The cook half. |
 | `principles.ts` | Loads the vendored principles and builds the block for each role. |
+| `herdr.ts` | The only herdr caller: list, open, and report cook tabs, and the in-memory `CookTabs` record. |
+| `watch.ts` | The viewer a cook tab runs under plain Node. Node builtins only. |
 
 Every file line and run-file line is checked with `Value.Check` before a field is read. A bad line is skipped and counted, never a crash of the tick. The tick reads the kitchen through one `Store.snapshot`, each file in isolation: a task whose `task.json` does not parse is listed on the board as `broken` with the reason, a bad `config.json` yields the defaults plus an error line, a bad project file is skipped plus an error line. The shell shows an error when it starts and again only after it went away and came back. `task.json` is written through tmp plus rename inside the task directory, whose `mkdir` is the exclusive step.
 
@@ -235,6 +252,18 @@ These were measured with probe scripts against the real binary. The fake model i
 - Pi sets `process.title = "pi"` at startup. After about 800 ms `/proc/<pid>/cmdline` reads `pi` only. `/proc/<pid>/environ` keeps the launcher's variables (probe-title.mjs).
 - Pi's bash tool spawns its command with `detached: true`, in its own process group, and kills that tree itself on SIGTERM.
 
+### herdr
+
+Measured on the herdr CLI at `/usr/bin/herdr`:
+
+- Inside herdr the process environment has `HERDR_ENV=1`, `HERDR_WORKSPACE_ID` (for example `w5`), `HERDR_PANE_ID`, `HERDR_BIN_PATH`, and `HERDR_SOCKET_PATH`.
+- `herdr tab create --workspace <W> --label <text> --cwd <dir> --no-focus` prints JSON. The new pane id is `.result.root_pane.pane_id`, the tab id `.result.tab.tab_id`.
+- `herdr pane run <pane> "exec <cmd>"` runs the command in the pane's shell. When that process exits, herdr closes the pane and its tab.
+- `herdr tab list --workspace <W>` gives `.result.tabs[]` with `tab_id` and `label`. `herdr pane list --workspace <W>` gives `.result.panes[]` with `pane_id` and `tab_id`.
+- `herdr pane report-agent <pane> --source chef --agent cook --state <idle|working|blocked|unknown> --message <text>` sets the tab's agent status in the herdr sidebar, also for a pane that runs a plain process.
+- A CLI error is JSON on stderr, `{"error":{"code","message"}}`, with exit 1. A missing pane is `pane_not_found`.
+- Node refuses to strip types from a `.ts` file under `node_modules` (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`, Node 24.21). `pi install git:...` and a local path install chef outside `node_modules`, so the viewer runs as `.ts`.
+
 ## Grafts and fixes from the arena
 
 - From the Sonnet candidate: the settle-aware cook poller (claim before steer, stop at `agent_before_settle`), the owner and reader type split, inbox writes by tmp plus rename, and the restart prefix in the first wake.
@@ -251,4 +280,6 @@ PR creation or merge automation (a brief can tell the cook to run `gh`), per-pro
 - Git (real temp repos): ensure worktree twice, landed by base and by remote branch, dirty refusal, a stale remote-tracking ref never deletes the branch, a detached HEAD is off the branch.
 - Kitchen e2e (real cook Pi processes, fake model, temp `PI_CODING_AGENT_DIR` and `CHEF_HOME`): dispatch to two projects; a cook reports `needs_decision`; `send` relaunches and the cook commits and reports `done`; a message sent mid-run is steered; stop, and send right after a stop; close refuses then succeeds; a new `Kitchen` instance adopts a live cook and derives the outcome of a cook that exited while no owner ran; a second tick does nothing; a bad model and a broken worktree path are launch failures that a send retries; a broken task.json and config.json do not stop the tick; a cook that never exits is killed; a ghost cook blocks a second launch; a lost lease is found before any write; a read-only session promotes.
 - Chef e2e (a chef `pi --mode rpc --chef` on the fake model): tools are active only with `--chef`; a dispatch leads to one `chef-wake` that starts a turn; a wake queued behind a busy turn is marked notified only on delivery; a wake dropped with `clear_queue` is sent again after the turn settles; the model gets the chef principles with `--chef` and after `/chef`, and none in a plain session or after `/chef off`. A kitchen e2e test proves the cook's model gets the cook principles and no chef rules.
+- Viewer (a real `node extension/watch.ts` process on a temp task dir): it shows the tool line, the text, and the report while the run file grows, with a character split across two appends; a provider error; a newer run file switches with a separator; a `closed` event makes it exit 0.
+- herdr (`CookTabs` against `test/fake-herdr.mjs`, which logs its argv and keeps its tabs in a JSON file): a cooking task opens exactly one tab with the label, cwd, and viewer command, and the next sync calls herdr not at all; the command starts the viewer from a shell; an existing tab is adopted; each state change reports once with the mapped state; a closed tab is not reopened for the same run; a herdr failure is an error line. Chef e2e with the fake binary: inside herdr a dispatch opens one tab and reports `working`, then `idle` once; without `HERDR_ENV` no herdr call happens. `test/support.ts` deletes every `HERDR_*` variable, so no test reaches the human's live herdr session.
 - Sync (a fixture tree, no network): `tools/sync-pstack.mjs` vendors the principles, drops a removed one, and a second run changes nothing.

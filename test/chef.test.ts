@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { after, afterEach, before, test } from "node:test";
@@ -8,7 +8,7 @@ import { TICK_MS, WAKE_TIMING } from "../extension/chef.ts";
 import { scanCooks, signalCook } from "../extension/cooks.ts";
 import { PRINCIPLES_DIR, RULES } from "../extension/principles.ts";
 import { Store } from "../extension/store.ts";
-import { CHEF_ENTRY, COMMIT_STEP, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, type TempKitchen, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
+import { CHEF_ENTRY, COMMIT_STEP, FAKE_HERDR, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, ROOT, type TempKitchen, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
 
 let fake: Awaited<ReturnType<typeof startFakeModel>>;
 let tk: TempKitchen;
@@ -37,13 +37,13 @@ interface Event {
   result?: { content?: { type: string; text?: string }[] };
 }
 
-function startPi(mode: "json" | "rpc", extra: string[], prompt?: string): { proc: ChildProcess; events: Event[]; exited: Promise<number | null> } {
+function startPi(mode: "json" | "rpc", extra: string[], prompt?: string, env: NodeJS.ProcessEnv = {}): { proc: ChildProcess; events: Event[]; exited: Promise<number | null> } {
   const args = ["--mode", mode, "--no-session", "-ne", "-e", CHEF_ENTRY, "-e", FAKE_PROVIDER, "--model", FAKE_MODEL, ...extra];
   if (mode === "json") args.push("-p", prompt ?? "STEP say: hi");
   const bin = process.env.CHEF_TEST_PI;
   const proc = bin
-    ? spawn(bin, args, { stdio: ["pipe", "pipe", "inherit"], env: { ...process.env } })
-    : spawn(process.execPath, [PI_CLI, ...args], { stdio: ["pipe", "pipe", "inherit"], env: { ...process.env } });
+    ? spawn(bin, args, { stdio: ["pipe", "pipe", "inherit"], env: { ...process.env, ...env } })
+    : spawn(process.execPath, [PI_CLI, ...args], { stdio: ["pipe", "pipe", "inherit"], env: { ...process.env, ...env } });
   children.push(proc);
   const events: Event[] = [];
   const decoder = new StringDecoder("utf8");
@@ -227,4 +227,44 @@ test("a wake that Pi drops from its queue before delivery is derived and sent ag
   assert.equal(wakes.length, 1, "the dropped wake was derived again and sent once");
   assert.ok(chef.events.indexOf(wakes[0]!) > firstSettle, "the wake came after the turn it was dropped from");
   assert.deepEqual(store.readEvents(store.listTaskIds()[0]!).map((e) => e.type), ["notified"]);
+});
+
+async function chefDispatchesOneTask(env: NodeJS.ProcessEnv) {
+  tk = tempKitchen();
+  const repo = makeRepo(tk.home, "api");
+  const brief = `STEP bash: sleep ${(3 * TICK_MS) / 1000}\n${REPORT_STEP("done", "slept")}`;
+  const script = [
+    `STEP tool chef_add_project ${JSON.stringify({ path: repo })}`,
+    `STEP tool chef_dispatch ${JSON.stringify({ project: "api", title: "Add a", brief })}`,
+    "STEP say: dispatched",
+    "STEP say: noted",
+  ].join("\n");
+  const log = join(tk.home, "herdr.log");
+  const chef = startPi("rpc", ["--chef"], undefined, { FAKE_HERDR_LOG: log, FAKE_HERDR_STATE: join(tk.home, "herdr.json"), HERDR_BIN_PATH: FAKE_HERDR, ...env });
+  chef.proc.stdin!.write(`${JSON.stringify({ id: "p1", type: "prompt", message: script })}\n`);
+  await until("the wake turn to settle", () => (settles(chef.events) >= 2 ? true : undefined), 60_000);
+  await new Promise((ok) => setTimeout(ok, 2 * TICK_MS));
+  chef.proc.stdin!.end();
+  assert.equal(await chef.exited, 0);
+  const calls = existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as string[]) : undefined;
+  return { calls, store: new Store(tk.kitchenDir) };
+}
+
+test("inside herdr the owner chef opens one cook tab per dispatched task and reports the cook's outcome", async () => {
+  const { calls, store } = await chefDispatchesOneTask({ HERDR_ENV: "1", HERDR_WORKSPACE_ID: "w9" });
+  assert.ok(calls, "the chef called herdr");
+  const id = store.listTaskIds()[0]!;
+  const creates = calls.filter((c) => c[0] === "tab" && c[1] === "create");
+  assert.deepEqual(creates, [["tab", "create", "--workspace", "w9", "--label", `cook ${id}`, "--cwd", store.readSpec(id).worktree, "--no-focus"]]);
+  const runs = calls.filter((c) => c[0] === "pane" && c[1] === "run");
+  assert.deepEqual(runs, [["pane", "run", "w9:p1", `exec node '${join(ROOT, "extension/watch.ts")}' '${store.taskDir(id)}'`]]);
+  const states = calls.filter((c) => c[1] === "report-agent").map((c) => c[c.indexOf("--state") + 1]);
+  assert.equal(states[0], "working", "the cooking run is reported as working");
+  assert.equal(states.at(-1), "idle", "the done outcome is reported as idle");
+  assert.equal(states.filter((s) => s === "idle").length, 1, "the outcome is reported once");
+});
+
+test("without HERDR_ENV the chef never calls herdr", async () => {
+  const { calls } = await chefDispatchesOneTask({ HERDR_WORKSPACE_ID: "w9" });
+  assert.equal(calls, undefined);
 });

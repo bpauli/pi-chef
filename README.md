@@ -47,6 +47,8 @@ The `/chef` command takes `on` (default), `off`, `takeover`, and `board`. One ch
 
 Each task has a worktree under the kitchen on branch `chef/<task id>`. Review the work there with `read` and `bash`, merge or push it as you like, then `chef_close` the task.
 
+When you run the chef inside herdr, the chef opens a tab named `cook <task id>` for each cook when it starts cooking. The tab shows what the cook does as it does it: its text, each tool call, a short tail of the tool output, errors, and its report. The herdr sidebar shows the state of each cook: working, blocked (it needs you), or idle. The tab is for watching only. Talk to the chef to steer a cook. When you close a tab, it stays closed until the next run of that task. `chef_close` closes the tab. Outside herdr, chef opens no tabs.
+
 ## Configuration
 
 The kitchen lives in `<pi agent dir>/chef` (usually `~/.pi/agent/chef`). Set `CHEF_HOME` to move it. An optional `config.json` in the kitchen:
@@ -91,7 +93,7 @@ The script replaces the vendored principles, copies the license, and writes `pri
 - One process model. Cooks are detached child processes. The chef finds them by a marker in their environment and reads their Pi JSONL stream. There is no watcher process; the chef session runs a one-second tick.
 - Derived state. firstmate keeps status logs, meta files, busy records, and a wake queue. chef stores no task state. Every state is derived from the task's files and the live processes, so a restart is the first tick, not a recovery routine.
 - One writer per file. The cook never writes a chef file. Its report is a tool call in its own transcript.
-- Small. About 2.8k lines of TypeScript plus tests, against firstmate's 122k lines of bash and a 6.9k-word supervisor contract.
+- Small. About 3k lines of TypeScript plus tests, against firstmate's 122k lines of bash and a 6.9k-word supervisor contract.
 - Less. No backlog, no project modes, no merge automation, no scouts, no remote workers. A brief can tell a cook to run `gh`. Everything else is the chef's judgment, written in one short skill.
 
 ## Development
