@@ -22,13 +22,19 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+          registry-url: https://registry.npmjs.org
       - name: Check the tag against the versions and CHANGELOG.md
         run: node scripts/release-preflight.mjs "$GITHUB_REF_NAME" "$RUNNER_TEMP/release"
+      - name: Use npm 11, which has Trusted Publishing
+        run: npm install -g npm@11
+      - name: Publish the npm packages through Trusted Publishing
+        run: node scripts/npm-publish.mjs
       - name: Create or update the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
