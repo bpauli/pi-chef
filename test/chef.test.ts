@@ -161,8 +161,8 @@ test("a dispatch leads to exactly one chef-wake that starts a turn, and chef_res
 
   const toolEnds = chef.events.filter((e) => e.type === "tool_execution_end");
   const text = (name: string) => toolEnds.find((e) => e.toolName === name)?.result?.content?.map((c) => c.text ?? "").join("") ?? "";
-  assert.match(text("chef_add_project"), /^Registered api: .*api, tasks fork from main\.$/);
-  assert.match(text("chef_dispatch"), /^api-1 is cooking on branch chef\/api-1 \(1\/3 cooks busy\)\. You will get a kitchen update when it needs you\.$/);
+  assert.match(text("chef_add_project"), /^Registered api: .*api, tasks fork from main on branches issue\/<task id>\.$/);
+  assert.match(text("chef_dispatch"), /^api-1 is cooking on branch issue\/api-1 \(1\/3 cooks busy\)\. You will get a kitchen update when it needs you\.$/);
 
   const wakes = chef.events.filter((e) => e.type === "message_start" && e.message?.role === "custom" && e.message.customType === "chef-wake");
   assert.equal(wakes.length, 1);
@@ -174,7 +174,7 @@ test("a dispatch leads to exactly one chef-wake that starts a turn, and chef_res
 
   const result = text("chef_result");
   assert.match(result, /^api-1 "Add a": idle \d+s, done, run 1 on fake\/scripted\.\nSummary: added a.txt\n/);
-  assert.match(result, /Branch chef\/api-1 in .*: 1 commit ahead of main, 1 not landed, clean\./);
+  assert.match(result, /Branch issue\/api-1 in .*: 1 commit ahead of main, 1 not landed, clean\./);
   assert.match(result, /a\.txt \| 1 \+/);
   assert.match(result, /Transcript: .*runs\/1\.jsonl$/);
 
@@ -217,6 +217,26 @@ test("the chef's prompt lists the model rules only in chef mode, and chef_dispat
   assert.match(dispatches[1]!, /^api-1 is cooking .* Skipped models: fake\/unknown \(Pi does not know this model\)\./);
   const spec = new Store(tk.kitchenDir).readSpec("api-1" as never);
   assert.deepEqual({ models: spec.models, rule: spec.rule }, { models: [{ model: FAKE_MODEL, thinking: "low" }], rule: "deep" });
+});
+
+test("chef_add_project refuses an invalid branch prefix, and names the prefix it registered, which chef_dispatch uses", async () => {
+  tk = tempKitchen();
+  const repo = makeRepo(tk.home, "api");
+  const script = [
+    `STEP tool chef_add_project ${JSON.stringify({ path: repo, branchPrefix: "bad..x/" })}`,
+    `STEP tool chef_add_project ${JSON.stringify({ path: repo, branchPrefix: "feat/" })}`,
+    `STEP tool chef_dispatch ${JSON.stringify({ project: "api", title: "Quick", brief: REPORT_STEP("done", "quick") })}`,
+    "STEP say: dispatched",
+  ].join("\n");
+  const chef = startPi("json", ["--chef"], script);
+  chef.proc.stdin!.end();
+  assert.equal(await chef.exited, 0);
+  const texts = (name: string) => chef.events.filter((e) => e.type === "tool_execution_end" && e.toolName === name).map((e) => e.result?.content?.map((c) => c.text ?? "").join("") ?? "");
+  const [refused, registered] = texts("chef_add_project");
+  assert.match(refused ?? "", /"bad\.\.x\/" is not a valid branch prefix/);
+  assert.match(registered ?? "", /^Registered api: .*api, tasks fork from main on branches feat\/<task id>\.$/);
+  assert.match(texts("chef_dispatch")[0] ?? "", /^api-1 is cooking on branch feat\/api-1 /);
+  assert.equal(new Store(tk.kitchenDir).readSpec("api-1" as never).branch, "feat/api-1");
 });
 
 test("when the first model fails with HTTP 402, the chef gets one wake, after the next model is done, and the wake and the result name the fallback", async () => {

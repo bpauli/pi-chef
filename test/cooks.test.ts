@@ -74,7 +74,7 @@ test("launchCook reports a missing binary through onEnd instead of crashing the 
 });
 
 test("the first prompt frames the brief with the worktree facts, the follow-up prompt carries only the messages", () => {
-  const project = { name: parseProjectName("api"), path: "/r", baseBranch: "main", note: "Go service", addedAt: millis(1) };
+  const project = { name: parseProjectName("api"), path: "/r", baseBranch: "main", branchPrefix: "chef/", note: "Go service", addedAt: millis(1) };
   const first = firstPrompt(spec, project, ["use the bucket"]);
   assert.match(first, /^# Add limiter\n\nTask api-1 for project api \(Go service\)\. You work in \/k\/worktrees\/api-1 on branch chef\/api-1, forked from main\.\n\n## Brief\n\nIntent: limit logins\.\n\n## Messages from the chef\n\nuse the bucket\n$/);
   assert.equal(followUpPrompt(["answer: B", "also run tests"]), "## Messages from the chef\n\nanswer: B\n\n---\n\nalso run tests\n");

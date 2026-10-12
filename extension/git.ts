@@ -35,11 +35,17 @@ export async function inspectRepo(path: string): Promise<{ root: string; baseBra
   return { root, baseBranch: remoteHead ? remoteHead.replace(/^origin\//, "") : "main" };
 }
 
+const isBranchName = (repo: string, name: string): Promise<boolean> => ok(repo, ["check-ref-format", "--branch", name]);
+
 export async function verifyBaseBranch(repo: string, baseBranch: string): Promise<void> {
-  if (!(await ok(repo, ["check-ref-format", "--branch", baseBranch]))) throw new ChefError(`"${baseBranch}" is not a valid branch name.`);
+  if (!(await isBranchName(repo, baseBranch))) throw new ChefError(`"${baseBranch}" is not a valid branch name.`);
   if (!(await ok(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", `refs/heads/${baseBranch}`]))) {
     throw new ChefError(`Branch "${baseBranch}" does not exist in ${repo}. Pass a local branch as baseBranch.`);
   }
+}
+
+export async function verifyTaskBranch(repo: string, branchPrefix: string, sampleBranch: string): Promise<void> {
+  if (!(await isBranchName(repo, sampleBranch))) throw new ChefError(`"${branchPrefix}" is not a valid branch prefix: a task branch like "${sampleBranch}" is not a valid branch name.`);
 }
 
 async function assertWorktree(repo: string, worktree: string): Promise<void> {

@@ -35,7 +35,7 @@ The chef model loads the `chef` skill and uses these tools:
 
 | Tool | Does |
 |---|---|
-| `chef_add_project` | Registers a git repository. Tasks fork from its base branch. |
+| `chef_add_project` | Registers a git repository. Tasks fork from its base branch. Task branches are `<branchPrefix><task id>`, with the prefix `issue/` by default. |
 | `chef_dispatch` | Creates a task and launches a cook, or queues it behind the cook limit. |
 | `chef_board` | Projects, open tasks with state and activity, cook count. |
 | `chef_send` | One verb for steer, answer, and resume. A cooking cook reads the message after its current tool call. An idle task restarts on the same Pi session with it. |
@@ -45,7 +45,7 @@ The chef model loads the `chef` skill and uses these tools:
 
 The `/chef` command takes `on` (default), `off`, `takeover`, and `board`. One chef session owns the kitchen at a time. A second session opens read-only and can show the board and results. `/chef takeover` moves the kitchen to the current session.
 
-Each task has a worktree under the kitchen on branch `chef/<task id>`. Review the work there with `read` and `bash`, merge or push it as you like, then `chef_close` the task.
+Each task has a worktree under the kitchen on its own branch. The branch is the project's branch prefix plus the task id, for example `issue/api-7`. Pass `branchPrefix` to `chef_add_project` to use the names that your team or CI expects, for example `feat/`. A task keeps the branch that it got at dispatch. Review the work there with `read` and `bash`, merge or push it as you like, then `chef_close` the task.
 
 To watch one cook live in a terminal, run the viewer on its task directory:
 

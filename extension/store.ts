@@ -23,6 +23,7 @@ import {
   ChefError,
   type Config,
   ConfigSchema,
+  DEFAULT_BRANCH_PREFIX,
   DEFAULT_CONFIG,
   configOf,
   type Lease,
@@ -191,7 +192,7 @@ export class Store {
 
   private readProjectFile(path: string): Project {
     const file = parseFile(ProjectSchema, path, readFileSync(path, "utf8"));
-    return { ...file, name: file.name as ProjectName, addedAt: millis(file.addedAt) };
+    return { ...file, name: file.name as ProjectName, branchPrefix: file.branchPrefix ?? DEFAULT_BRANCH_PREFIX, addedAt: millis(file.addedAt) };
   }
 
   addProject(p: Project): Project {

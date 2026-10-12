@@ -10,8 +10,8 @@ Use these words in code, docs, tool text, and commit messages. One word means on
 | lease | The file `pass.lock` that names the one chef session that owns the kitchen. A dead holder makes the lease stale, and the next chef takes it. | `extension/kitchen.ts` |
 | owner | The chef session that holds the lease. Only the owner launches cooks, writes task logs, and receives wakes. | `extension/kitchen.ts` |
 | read-only session | A chef-mode session that does not hold the lease. It can show the board and results. It cannot change the kitchen. | `extension/kitchen.ts` |
-| project | A git repository that the human registered with the chef. Tasks fork from its base branch. | `extension/store.ts` |
-| task | One unit of work for one project, with a title and a brief. A task has its own worktree, its own branch `chef/<task id>`, and its own Pi session. Task ids look like `api-7`. | `extension/domain.ts` |
+| project | A git repository that the human registered with the chef. Tasks fork from its base branch. Its branch prefix (default `issue/`) starts the branch name of each new task. | `extension/store.ts` |
+| task | One unit of work for one project, with a title and a brief. A task has its own worktree, its own branch `<branch prefix><task id>` (fixed at dispatch), and its own Pi session. Task ids look like `api-7`. | `extension/domain.ts` |
 | brief | The instructions for a task, written by the chef. It says the intent, what done means, and how to deliver. | `extension/domain.ts` |
 | cook | A child Pi process that works on one task. A cook runs detached, so it can outlive the chef session. | `extension/cooks.ts` |
 | run | One cook process lifetime for a task. A task has one or more runs. Run `n` writes `runs/<n>.jsonl`. A later run continues the same Pi session. | `extension/store.ts` |

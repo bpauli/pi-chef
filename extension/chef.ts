@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { COOKS_EVENT, COOKS_REQUEST_EVENT, type CooksSnapshot, ROLE_EVENT, answerRole, cooksSnapshot, offSnapshot } from "./events.ts";
-import { type Board, ChefError, ChefModeEntrySchema, errorMessage, type Millis, type Notice, type NoticeRef, type Pid, type TaskId, type WakeDetails, WakeDetailsSchema, millis, parseTaskId, runNo } from "./domain.ts";
+import { type Board, ChefError, ChefModeEntrySchema, errorMessage, type Millis, type Notice, type NoticeRef, type Pid, type TaskId, type WakeDetails, WakeDetailsSchema, millis, parseTaskId, runNo, taskBranch } from "./domain.ts";
 import { type ModelCheck, type RestartNote, boardHeader, droppedText, modelsPrompt, outcomeDetail, boardLines, formatAge, formatWake, outcomeText, plural, queuePosition, stateText, statusText } from "./derive.ts";
 import { piInvocation } from "./cooks.ts";
 import { Kitchen, type KitchenReader, type TaskResult, lostError } from "./kitchen.ts";
@@ -25,6 +25,7 @@ const AddProjectParams = Type.Object(
     name: Type.Optional(Type.String({ description: "Short name: a-z, 0-9, dashes. Default: the repository directory name, lowercased, with other characters turned into dashes." })),
     note: Type.Optional(Type.String({ description: "One line every cook of this project reads, for example how to run the tests." })),
     baseBranch: Type.Optional(Type.String({ description: "Branch tasks fork from. Default: the current branch of the repository." })),
+    branchPrefix: Type.Optional(Type.String({ description: "Task branches are <branchPrefix><task id>, for example feat/ gives feat/api-7. Default: issue/." })),
   },
   { additionalProperties: false },
 );
@@ -337,7 +338,7 @@ export function installChef(pi: ExtensionAPI): void {
     parameters: AddProjectParams,
     async execute(_id, params) {
       const p = await owner().addProject(params);
-      return text(`Registered ${p.name}: ${p.path}, tasks fork from ${p.baseBranch}.`);
+      return text(`Registered ${p.name}: ${p.path}, tasks fork from ${p.baseBranch} on branches ${taskBranch(p.branchPrefix, "<task id>")}.`);
     },
   });
 

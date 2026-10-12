@@ -68,13 +68,18 @@ export const ProjectSchema = Type.Object(
     name: Type.String(),
     path: Type.String({ description: "absolute repo root" }),
     baseBranch: Type.String({ description: "branch tasks fork from and land into" }),
+    branchPrefix: Type.Optional(Type.String({ description: "task branches are <branchPrefix><task id>" })),
     note: Type.Optional(Type.String()),
     addedAt: Type.Number(),
   },
   { additionalProperties: false },
 );
 export type ProjectFile = Static<typeof ProjectSchema>;
-export type Project = Omit<ProjectFile, "name" | "addedAt"> & { name: ProjectName; addedAt: Millis };
+export type Project = Omit<ProjectFile, "name" | "addedAt" | "branchPrefix"> & { name: ProjectName; branchPrefix: string; addedAt: Millis };
+
+export const DEFAULT_BRANCH_PREFIX = "issue/";
+
+export const taskBranch = (branchPrefix: string, task: string): string => `${branchPrefix}${task}`;
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const ThinkingSchema = StringEnum(THINKING_LEVELS, { description: "pi --thinking level" });
@@ -91,7 +96,7 @@ export const TaskSpecSchema = Type.Object(
     project: Type.String(),
     title: Type.String(),
     brief: Type.String(),
-    branch: Type.String({ description: "chef/<id>" }),
+    branch: Type.String({ description: "<branchPrefix><id>, fixed at dispatch" }),
     worktree: Type.String({ description: "kitchen/worktrees/<id>" }),
     baseBranch: Type.String(),
     sessionId: Type.String(),

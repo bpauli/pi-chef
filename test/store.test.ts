@@ -223,11 +223,21 @@ test("a task.json written before model lists loads its model as a list of one, a
 test("addProject is idempotent for the same path and refuses the same name for another path", () => {
   withDir((dir) => {
     const store = new Store(dir);
-    const p = { name: parseProjectName("api"), path: "/r/api", baseBranch: "main", addedAt: millis(1) };
+    const p = { name: parseProjectName("api"), path: "/r/api", baseBranch: "main", branchPrefix: "feat/", addedAt: millis(1) };
     assert.deepEqual(store.addProject(p), p);
     assert.deepEqual(store.addProject({ ...p, addedAt: millis(2) }), p);
     assert.throws(() => store.addProject({ ...p, path: "/other" }), ChefError);
     assert.deepEqual(store.loadProjects().projects, [p]);
+  });
+});
+
+test("a project file without branchPrefix loads with the issue/ default", () => {
+  withDir((dir) => {
+    const store = new Store(dir);
+    mkdirSync(join(dir, "projects"), { recursive: true });
+    writeFileSync(join(dir, "projects", "api.json"), JSON.stringify({ name: "api", path: "/r/api", baseBranch: "main", addedAt: 1 }));
+    assert.equal(store.readProject(parseProjectName("api"))?.branchPrefix, "issue/");
+    assert.deepEqual(store.loadProjects().projects.map((p) => p.branchPrefix), ["issue/"]);
   });
 });
 

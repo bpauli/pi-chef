@@ -4,6 +4,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import {
   type Board,
   ChefError,
+  DEFAULT_BRANCH_PREFIX,
   type Holder,
   type Lease,
   type Millis,
@@ -20,10 +21,11 @@ import {
   parseModel,
   parseProjectName,
   slugProjectName,
+  taskBranch,
 } from "./domain.ts";
 import { type Action, type Dropped, type GitFacts, type LiveCooks, type ModelCheck, type PlanInput, type TaskRecord, closeVerdict, deriveTask, fallbackFrom, nextRunOf, plan, queuePosition, selectModels, stateText } from "./derive.ts";
 import { type CookEnd, CookTable, type PiInvocation, fallbackPrompt, firstPrompt, followUpPrompt, launchCook, messagesSection, pidStart, signalCook } from "./cooks.ts";
-import { type RemoveResult, diffstat, ensureWorktree, gitFacts, inspectRepo, removeWorktree, verifyBaseBranch } from "./git.ts";
+import { type RemoveResult, diffstat, ensureWorktree, gitFacts, inspectRepo, removeWorktree, verifyBaseBranch, verifyTaskBranch } from "./git.ts";
 import { RunTails, type Snapshot, type Store } from "./store.ts";
 
 export interface KitchenDeps {
@@ -227,12 +229,14 @@ export class Kitchen extends KitchenReader {
     return next;
   }
 
-  addProject(input: { path: string; name?: string; note?: string; baseBranch?: string }): Promise<Project> {
+  addProject(input: { path: string; name?: string; note?: string; baseBranch?: string; branchPrefix?: string }): Promise<Project> {
     return this.mutate(async () => {
       const { root, baseBranch } = await inspectRepo(input.path.replace(/^~(?=$|\/)/, process.env.HOME ?? "~"));
       const name = input.name === undefined ? slugProjectName(basename(root)) : parseProjectName(input.name);
       if (input.baseBranch !== undefined) await verifyBaseBranch(root, input.baseBranch);
-      return this.store.addProject({ name, path: root, baseBranch: input.baseBranch ?? baseBranch, note: input.note, addedAt: this.now() });
+      const branchPrefix = input.branchPrefix ?? DEFAULT_BRANCH_PREFIX;
+      await verifyTaskBranch(root, branchPrefix, taskBranch(branchPrefix, `${name}-1`));
+      return this.store.addProject({ name, path: root, baseBranch: input.baseBranch ?? baseBranch, branchPrefix, note: input.note, addedAt: this.now() });
     });
   }
 
@@ -251,7 +255,7 @@ export class Kitchen extends KitchenReader {
           project: project.name,
           title: input.title,
           brief: input.brief,
-          branch: `chef/${candidate}`,
+          branch: taskBranch(project.branchPrefix, candidate),
           worktree: this.store.worktreeDir(candidate),
           baseBranch: project.baseBranch,
           sessionId: randomUUID() as SessionId,

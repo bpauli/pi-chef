@@ -98,7 +98,7 @@ test("dispatch to two projects: each cook commits and reports done, one notice p
   assert.deepEqual(result.git, { dirtyFiles: 0, ahead: 1, unlanded: 1, onBranch: true });
   assert.match(result.diffstat, /a\.txt/);
   assert.equal(result.transcript, store.runFile(a.spec.id, runNo(1)));
-  assert.equal(git(repos.api, "rev-list", "--count", "main..chef/api-1"), "1");
+  assert.equal(git(repos.api, "rev-list", "--count", "main..issue/api-1"), "1");
 
   const quiet = await kitchen.tick();
   assert.equal(quiet.kind, "ok");
@@ -150,7 +150,7 @@ test("a cook whose first model answers HTTP 402 fails run 1, run 2 starts on the
   const prompt2 = readFileSync(store.runPrompt(view.spec.id, runNo(2)), "utf8");
   assert.match(prompt2, /^## Model change\n\nYour last run on fake\/broke stopped with a provider error: 402: /);
   assert.doesNotMatch(prompt2, /## Brief/, "the session already holds the brief");
-  assert.equal(git(repos.api, "rev-list", "--count", "main..chef/api-1"), "1", "the cook on the next model did the brief's work");
+  assert.equal(git(repos.api, "rev-list", "--count", "main..issue/api-1"), "1", "the cook on the next model did the brief's work");
 
   const quiet = await kitchen.tick();
   assert.deepEqual(quiet.kind === "ok" && quiet.notices, []);
@@ -303,12 +303,12 @@ test("close refuses unlanded work, then succeeds after a merge and removes the w
   await assert.rejects(kitchen.close(view.spec.id, false), (e: unknown) => e instanceof ChefError && /1 commit not on the base branch/.test(e.message));
   assert.ok(existsSync(view.spec.worktree));
 
-  git(repos.api, "merge", "-q", "--ff-only", "chef/api-1");
+  git(repos.api, "merge", "-q", "--ff-only", "issue/api-1");
   const closed = await kitchen.close(view.spec.id, false);
   assert.equal(closed.view.state.kind, "closed");
   assert.deepEqual(closed.removal, { worktree: "removed", branch: "deleted" });
   assert.equal(existsSync(view.spec.worktree), false);
-  assert.equal(git(repos.api, "branch", "--list", "chef/api-1"), "");
+  assert.equal(git(repos.api, "branch", "--list", "issue/api-1"), "");
   assert.deepEqual(store.readEvents(view.spec.id).map((e) => e.type), ["notified", "closed"]);
   const again = await kitchen.close(view.spec.id, false);
   assert.equal(again.view.state.kind, "closed");
@@ -323,7 +323,7 @@ test("close with discard stops a running cook and removes its worktree and branc
   const { view } = await kitchen.dispatch({ project: "api", title: "Drop me", brief: `${COMMIT_STEP("d.txt")}\nSTEP bash: sleep 60` });
   await until("cook has committed", async () => {
     await kitchen.tick();
-    return git(repos.api, "branch", "--list", "chef/api-1") && git(repos.api, "rev-list", "--count", "main..chef/api-1") === "1" ? true : undefined;
+    return git(repos.api, "branch", "--list", "issue/api-1") && git(repos.api, "rev-list", "--count", "main..issue/api-1") === "1" ? true : undefined;
   });
   await assert.rejects(kitchen.close(view.spec.id, false), /still cooking/);
   const closed = await kitchen.close(view.spec.id, true);
@@ -332,7 +332,62 @@ test("close with discard stops a running cook and removes its worktree and branc
     await kitchen.tick();
     return existsSync(view.spec.worktree) ? undefined : true;
   });
-  assert.equal(git(repos.api, "branch", "--list", "chef/api-1"), "");
+  assert.equal(git(repos.api, "branch", "--list", "issue/api-1"), "");
+});
+
+test("a project without a branch prefix dispatches on issue/<task id>, and a project with feat/ dispatches on feat/<task id>", async () => {
+  const { kitchen, store, repos } = await setup();
+  await kitchen.addProject({ path: repos.web, name: "ui", branchPrefix: "feat/" });
+  const { view: plain } = await kitchen.dispatch({ project: "api", title: "Plain", brief: `${COMMIT_STEP("p.txt")}\n${REPORT_STEP("done", "plain")}` });
+  const { view: feat } = await kitchen.dispatch({ project: "ui", title: "Feat", brief: `${COMMIT_STEP("f.txt")}\n${REPORT_STEP("done", "feat")}` });
+  assert.equal(store.readSpec(plain.spec.id).branch, "issue/api-1");
+  assert.equal(store.readSpec(feat.spec.id).branch, "feat/ui-1");
+  await waitNotice(kitchen, plain.spec.id);
+  await waitNotice(kitchen, feat.spec.id);
+  assert.equal(git(repos.api, "rev-list", "--count", "main..issue/api-1"), "1");
+  assert.equal(git(repos.web, "rev-list", "--count", "main..feat/ui-1"), "1");
+  assert.equal(git(repos.api, "branch", "--list", "chef/*"), "");
+  assert.equal(git(repos.web, "branch", "--list", "chef/*", "issue/*"), "");
+});
+
+test("addProject refuses a branch prefix that gives an invalid task branch, and writes no project", async () => {
+  const { kitchen, store, repos } = await setup();
+  for (const branchPrefix of ["bad..x/", "-x/", "a b/", "feat//", "/", "x.lock/", "feat/@{"]) {
+    await assert.rejects(
+      kitchen.addProject({ path: repos.api, name: "bad", branchPrefix }),
+      (e: unknown) => e instanceof ChefError && e.message.includes(`"${branchPrefix}" is not a valid branch prefix`),
+      branchPrefix,
+    );
+  }
+  assert.deepEqual(store.loadProjects().projects.map((p) => p.name), ["api", "web"]);
+});
+
+test("a task stored on chef/<task id> before branch prefixes keeps that branch: result reads it, and close deletes it once landed", async () => {
+  const { kitchen, store, repos } = await setup();
+  const id = store.nextTaskId(parseProjectName("api"));
+  store.createTask({
+    id,
+    project: parseProjectName("api"),
+    title: "Old",
+    brief: `${COMMIT_STEP("o.txt")}\n${REPORT_STEP("done", "old")}`,
+    branch: `chef/${id}`,
+    worktree: store.worktreeDir(id),
+    baseBranch: "main",
+    sessionId: "0199c0de-2222-7000-8000-000000000002" as SessionId,
+    models: [],
+    createdAt: millis(Date.now()),
+  });
+  await waitNotice(kitchen, id);
+  const result = await kitchen.result(id);
+  assert.deepEqual(result.git, { dirtyFiles: 0, ahead: 1, unlanded: 1, onBranch: true });
+  assert.match(result.diffstat, /o\.txt/);
+  await assert.rejects(kitchen.close(id, false), /1 commit not on the base branch/);
+
+  git(repos.api, "merge", "-q", "--ff-only", `chef/${id}`);
+  const closed = await kitchen.close(id, false);
+  assert.deepEqual(closed.removal, { worktree: "removed", branch: "deleted" });
+  assert.equal(git(repos.api, "branch", "--list", `chef/${id}`), "");
+  assert.equal(git(repos.api, "branch", "--list", `issue/${id}`), "", "the old task never got a branch under the new prefix");
 });
 
 test("a new Kitchen adopts a live cook without a second launch and wakes once when it finishes", async () => {
