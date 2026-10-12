@@ -5,15 +5,9 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { PACKAGES } from "./packages.mjs";
 
 const PI_CLI = resolve("node_modules/@earendil-works/pi-coding-agent/dist/cli.js");
-const PACKAGES = [
-  { dir: ".", must: ["LICENSE", "README.md", "package.json", "extension/index.ts", "extension/watch.ts", "skills/chef/SKILL.md"] },
-  { dir: "addons/herdr", must: ["LICENSE", "README.md", "package.json", "index.ts", "herdr.ts"] },
-  { dir: "addons/subagents", must: ["LICENSE", "README.md", "package.json", "index.ts", "fleet.ts"] },
-  { dir: "addons/recipe-pstack", must: ["LICENSE", "README.md", "package.json", "index.ts", "principles.ts", "principles/LICENSE"] },
-  { dir: "addons/recipe-superpowers", must: ["LICENSE", "README.md", "package.json", "index.ts", "superpowers.ts", "principles/LICENSE"] },
-];
 const FORBIDDEN = /^(test|addons|node_modules|\.github|scripts|docs\/assets)\/|^(todo\.md|decisions\.tsv|out\.txt|AGENTS\.md|tsconfig\.json)$|\.test\.ts$/;
 const MARKER = "pack-check-loaded";
 
