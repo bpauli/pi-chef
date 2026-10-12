@@ -1,10 +1,17 @@
 {
   "name": "pi-chef-recipe-superpowers",
-  "private": true,
   "version": "0.1.1",
   "description": "Optional pi-chef recipe: the chef and every cook work by the superpowers skills of Jesse Vincent.",
   "type": "module",
   "license": "MIT",
+  "homepage": "https://github.com/bpauli/pi-chef/tree/main/addons/recipe-superpowers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bpauli/pi-chef.git",
+    "directory": "addons/recipe-superpowers"
+  },
+  "bugs": "https://github.com/bpauli/pi-chef/issues",
+  "files": ["index.ts", "superpowers.ts", "principles/"],
   "keywords": ["pi-package", "pi-chef", "superpowers"],
   "pi": {
     "extensions": ["./index.ts"]
