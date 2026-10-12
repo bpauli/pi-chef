@@ -1,0 +1,43 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: 22.19.0
+          - os: ubuntu-latest
+            node: 24
+          # The macOS cook lookup (ps -E) has no other test coverage. Report it, but do not block on it yet.
+          - os: macos-latest
+            node: 24
+            experimental: true
+    name: ${{ matrix.os }}, node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental == true }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Set a git identity for the test repositories
+        run: git config --global user.email ci@example.com && git config --global user.name ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test
+        run: npm test

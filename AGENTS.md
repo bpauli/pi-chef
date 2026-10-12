@@ -13,6 +13,7 @@ npm run check        # both
 pi -e ./extension/index.ts --chef   # try it in a real Pi session
 node addons/recipe-pstack/sync-pstack.mjs <cursor/plugins checkout>   # update the vendored pstack principles
 node addons/recipe-superpowers/sync-superpowers.mjs <obra/superpowers checkout>   # update the vendored superpowers skills
+node scripts/release-preflight.mjs v<version>   # check versions and CHANGELOG.md before you tag a release
 ```
 
 The e2e tests start real Pi processes on `test/fake-model/`, a scripted local model. They need no network and no credentials.

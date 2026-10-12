@@ -267,6 +267,7 @@ A cook is a full Pi agent with the tools of your Pi setup. Its worktree is a wor
 - [CONTEXT.md](CONTEXT.md). The words of the kitchen: chef, cook, kitchen, task, run, wake, cooks snapshot, recipe, model rule, candidate, fallback.
 - [skills/chef/SKILL.md](skills/chef/SKILL.md). How the chef model takes a request, writes a brief, and handles a kitchen update.
 - [AGENTS.md](AGENTS.md). Rules for work on this repository.
+- [CHANGELOG.md](CHANGELOG.md). What changed in each release.
 - The README of each add-on in `addons/`.
 
 ## Development
@@ -280,6 +281,17 @@ pi -e ./extension/index.ts --chef   # try it in a real Pi session
 ```
 
 The tests need no network and no credentials. The e2e tests start real Pi processes on `test/fake-model/`, a scripted local model. A brief holds `STEP` lines, and the fake model plays them. `node test/fixtures/record.mjs` records the Pi stream fixtures for the unit tests again.
+
+The `Validate` workflow runs the typecheck and all tests on every push to `main` and on every pull request. It runs on Ubuntu with Node 22.19.0 and Node 24, and on macOS with Node 24. The macOS job reports, but does not block yet.
+
+To release a version:
+
+1. Set the same `version` in `package.json` and in each `addons/*/package.json`, then run `npm install` to update `package-lock.json`.
+2. Add a section `## <version>` to `CHANGELOG.md`. Its text becomes the release notes.
+3. Run `node scripts/release-preflight.mjs v<version>`. It does the same checks as the release workflow.
+4. Commit, then tag and push: `git tag v<version> && git push origin main v<version>`.
+
+The `Release` workflow runs `Validate` on the tag, checks the tag against the versions and `CHANGELOG.md`, and creates the GitHub release. It does not publish to npm. Users install with `pi install git:github.com/bpauli/pi-chef`.
 
 ## License
 
