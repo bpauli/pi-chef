@@ -219,6 +219,29 @@ Emit rules, in `chef.ts`:
 
 Each consumer is the one writer of what it shows (a herdr tab status, a FleetView record). Chef never writes it.
 
+### Role query
+
+An add-on that acts per role asks which pi-chef role its Pi process has:
+
+```ts
+const ROLE_EVENT = "pi-chef:role:v1";
+
+interface RoleRequest {
+  version: 1;
+  role?: "chef" | "cook"; // the asker leaves it unset; chef fills it
+}
+```
+
+The asker emits a new request and reads `role` when `emit` returns. Pi 1.0.3 runs the listeners of `pi.events` synchronously: `emit` calls `EventEmitter.emit` (`dist/core/event-bus.js:5-6`), and each listener is an async wrapper that calls the handler before its first `await` (`dist/core/event-bus.js:9-11`). A listener that sets `role` without an `await` has set it before `emit` returns.
+
+| Process | `role` | Answered by |
+|---|---|---|
+| cook | `cook` | `cook.ts`, from its own install. It cannot read `CHEF_ROLE`, because the cook role deletes it from `process.env` at load. |
+| chef session, while chef mode is on (owner or read-only) | `chef` | `chef.ts`, while the session has the kitchen open |
+| normal Pi session, chef mode off, or chef not installed | unset | nobody |
+
+Chef checks the request with typebox and changes nothing else. The answer is the state at the moment of the question, so an asker asks again each time it needs the role, for example at each turn. Then extension load order does not matter, and `/chef` or `/chef off` changes the next answer.
+
 ## The viewer
 
 `extension/watch.ts` is chef's reader of its own run files, for a human in a terminal. Every cooks snapshot names it per task as `viewer`: `node <extension>/watch.ts <task dir>`. The viewer prints the highest `runs/<n>.jsonl` from its start, then follows the appended bytes every 250 ms. It shows the prompt and steer messages, the streamed assistant text, one line per tool call with its key argument, a dim tail of the tool output, provider errors in red, the `chef_report` status and summary, and the run end. A newer run file gets a separator line with its run number. The viewer exits 0 when `log.jsonl` has a `closed` event. The viewer decides nothing. It runs under plain Node, so it imports node builtins only and narrows each line with small hand guards.
@@ -292,7 +315,7 @@ About 3k lines of source. Any flow passes through at most three files: tool, the
 | `chef.ts` | The Pi shell: tools as one-call adapters, `/chef`, the widget, the `Waker`, the cooks snapshot emission, activation. |
 | `cook.ts` | The cook half. |
 | `principles.ts` | Loads the vendored principles and builds the block for each role. |
-| `events.ts` | The integration contract: the cooks snapshot types, the event names, and the pure builder. No Pi types. |
+| `events.ts` | The integration contract: the cooks snapshot types, the role query, the event names, and the pure builder. No Pi types. |
 | `watch.ts` | The viewer of a task's run files, under plain Node. Node builtins only. |
 
 The add-ons live outside `extension/` and import no runtime code from it:
@@ -361,7 +384,7 @@ PR creation or merge automation (a brief can tell the cook to run `gh`), per-pro
 - Git (real temp repos): ensure worktree twice, landed by base and by remote branch, dirty refusal, a stale remote-tracking ref never deletes the branch, a detached HEAD is off the branch.
 - Kitchen e2e (real cook Pi processes, fake model, temp `PI_CODING_AGENT_DIR` and `CHEF_HOME`): dispatch to two projects; a cook reports `needs_decision`; `send` relaunches and the cook commits and reports `done`; a message sent mid-run is steered; stop, and send right after a stop; close refuses then succeeds; a new `Kitchen` instance adopts a live cook and derives the outcome of a cook that exited while no owner ran; a second tick does nothing; a bad model and a broken worktree path are launch failures that a send retries; a broken task.json and config.json do not stop the tick; a cook that never exits is killed; a ghost cook blocks a second launch; a lost lease is found before any write; a read-only session promotes.
 - Chef e2e (a chef `pi --mode rpc --chef` on the fake model): tools are active only with `--chef`; a dispatch leads to one `chef-wake` that starts a turn; a wake queued behind a busy turn is marked notified only on delivery; a wake dropped with `clear_queue` is sent again after the turn settles; the model gets the chef principles with `--chef` and after `/chef`, and none in a plain session or after `/chef off`. A kitchen e2e test proves the cook's model gets the cook principles and no chef rules.
-- Integration events: `cooksSnapshot` per state (cooking with activity and transcript, idle with each outcome, idle before a first run, queued, closed absent, the viewer arguments). Chef e2e with `test/cooks-recorder.ts` loaded by `-e`: a dispatch emits snapshots that go from no task to cooking to idle done, with no two equal snapshots in a row; a request gets the current snapshot again; `/chef off` emits role off, and nothing follows.
+- Integration events: `cooksSnapshot` per state (cooking with activity and transcript, idle with each outcome, idle before a first run, queued, closed absent, the viewer arguments). Chef e2e with `test/cooks-recorder.ts` loaded by `-e`: a dispatch emits snapshots that go from no task to cooking to idle done, with no two equal snapshots in a row; a request gets the current snapshot again; `/chef off` emits role off, and nothing follows. With `test/role-recorder.ts`, which asks for the role at each turn start and records the answer right after `emit` returns: a chef session answers no role, then `chef` after `/chef`, then no role after `/chef off`; a kitchen e2e cook answers `cook`.
 - Viewer (a real `node extension/watch.ts` process on a temp task dir): it shows the tool line, the text, and the report while the run file grows, with a character split across two appends; a provider error; a newer run file switches with a separator; a `closed` event makes it exit 0.
 - herdr add-on (`addons/herdr/test/`, `CookTabs` and the add-on entry driven by snapshots against `fake-herdr.mjs`, which logs its argv and keeps its tabs in a JSON file): a cooking task opens exactly one tab with the label, cwd, and viewer command, and the next snapshot calls herdr not at all; the command starts the viewer from a shell; an existing tab is adopted; each state change reports once with the mapped state; a closed tab is not reopened for the same run; a read-only or off snapshot calls herdr not at all and the next owner snapshot adopts again; a herdr failure is an error line, shown once; the entry asks for a snapshot at session start and skips another version; outside herdr it does nothing. Chef e2e with the add-on loaded by `-e` and the fake binary: inside herdr a dispatch opens one tab and reports `working`, then `idle` once; without `HERDR_ENV` no herdr call happens. `test/support.ts` deletes every `HERDR_*` variable, so no test reaches the human's live herdr session.
 - FleetView add-on (`addons/subagents/test/`, the add-on entry against a fake pi-subagents package in a temp agent dir whose `external-runs` module records the calls and keeps the jobs): a cooking task registers one `running` job under the session file with its activity and transcript; each outcome maps to its state and action, and an unchanged snapshot writes nothing; a task that leaves the snapshot, role off, and session shutdown unregister; a snapshot before session start is shown at session start; a job left by an earlier copy is updated; a project install is found; without the package nothing is shown and one info notice says so. Chef e2e with the add-on loaded by `-e` and the fake package in the temp agent dir: a dispatch registers one job, shows it `running`, then `completed`, and `/chef off` unregisters it.

@@ -29,6 +29,7 @@ export function installFakeSubagents(npmRoot: string): string {
   return module;
 }
 export const COOKS_RECORDER = join(ROOT, "test/cooks-recorder.ts");
+export const ROLE_RECORDER = join(ROOT, "test/role-recorder.ts");
 export const FAKE_MODEL = "fake/scripted";
 
 export async function startFakeModel(): Promise<{ port: string; stop(): void }> {

@@ -1,4 +1,6 @@
 import { fileURLToPath } from "node:url";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { activityText, outcomeDetail } from "./derive.ts";
 import type { Board, Outcome, RunNo, TaskId, TaskView } from "./domain.ts";
 
@@ -71,3 +73,22 @@ export function cooksSnapshot(sessionId: string, board: Board, paths: KitchenPat
 }
 
 export const offSnapshot = (sessionId: string): CooksSnapshot => ({ version: 1, sessionId, role: "off", tasks: [] });
+
+/**
+ * Asks which pi-chef role this Pi process has. The asker emits a request with no
+ * `role`. Pi's event bus runs listeners synchronously, so chef has filled `role`
+ * when `emit` returns: `chef` while chef mode is on, `cook` in a cook process.
+ * Otherwise `role` stays unset.
+ */
+export const ROLE_EVENT = "pi-chef:role:v1";
+
+export interface RoleRequest {
+  version: 1;
+  role?: "chef" | "cook";
+}
+
+const RoleRequestSchema = Type.Object({ version: Type.Literal(1) });
+
+export function answerRole(data: unknown, role: NonNullable<RoleRequest["role"]>): void {
+  if (Value.Check(RoleRequestSchema, data)) Object.assign(data, { role });
+}

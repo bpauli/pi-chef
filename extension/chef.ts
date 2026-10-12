@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { COOKS_EVENT, COOKS_REQUEST_EVENT, type CooksSnapshot, cooksSnapshot, offSnapshot } from "./events.ts";
+import { COOKS_EVENT, COOKS_REQUEST_EVENT, type CooksSnapshot, ROLE_EVENT, answerRole, cooksSnapshot, offSnapshot } from "./events.ts";
 import { type Board, ChefError, ChefModeEntrySchema, errorMessage, type Millis, type Notice, type NoticeRef, type Pid, type TaskId, type WakeDetails, WakeDetailsSchema, millis, parseTaskId, runNo } from "./domain.ts";
 import { type RestartNote, boardHeader, outcomeDetail, boardLines, formatAge, formatWake, outcomeText, plural, queuePosition, stateText, statusText } from "./derive.ts";
 import { piInvocation } from "./cooks.ts";
@@ -283,6 +283,9 @@ export function installChef(pi: ExtensionAPI): void {
   pi.on("session_shutdown", () => close(undefined, true));
   pi.events.on(COOKS_REQUEST_EVENT, () => {
     if (session?.snapshot) pi.events.emit(COOKS_EVENT, session.snapshot);
+  });
+  pi.events.on(ROLE_EVENT, (data) => {
+    if (session) answerRole(data, "chef");
   });
   pi.on("message_end", (event) => {
     const m = event.message;

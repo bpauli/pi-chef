@@ -9,7 +9,7 @@ import { scanCooks, signalCook } from "../extension/cooks.ts";
 import { PRINCIPLES_DIR, RULES } from "../extension/principles.ts";
 import { Store } from "../extension/store.ts";
 import type { CooksSnapshot } from "../extension/events.ts";
-import { CHEF_ENTRY, COMMIT_STEP, COOKS_RECORDER, FAKE_HERDR, HERDR_ADDON, SUBAGENTS_ADDON, installFakeSubagents, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, ROOT, type TempKitchen, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
+import { CHEF_ENTRY, COMMIT_STEP, COOKS_RECORDER, ROLE_RECORDER, FAKE_HERDR, HERDR_ADDON, SUBAGENTS_ADDON, installFakeSubagents, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, ROOT, type TempKitchen, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
 
 let fake: Awaited<ReturnType<typeof startFakeModel>>;
 let tk: TempKitchen;
@@ -228,6 +228,29 @@ test("a wake that Pi drops from its queue before delivery is derived and sent ag
   assert.equal(wakes.length, 1, "the dropped wake was derived again and sent once");
   assert.ok(chef.events.indexOf(wakes[0]!) > firstSettle, "the wake came after the turn it was dropped from");
   assert.deepEqual(store.readEvents(store.listTaskIds()[0]!).map((e) => e.type), ["notified"]);
+});
+
+test("a role request gets chef while chef mode is on, and no role before /chef or after /chef off", async () => {
+  tk = tempKitchen();
+  const record = join(tk.home, "roles.txt");
+  const pi = startPi("rpc", ["-e", ROLE_RECORDER], undefined, { ROLE_RECORD: record });
+  const send = (id: string, message: string) => pi.proc.stdin!.write(`${JSON.stringify({ id, type: "prompt", message })}\n`);
+  const answered = (id: string) => until(`response ${id}`, () => (pi.events.some((e) => e.type === "response" && e.id === id) ? true : undefined));
+  const turn = async (id: string, settled: number) => {
+    send(id, "STEP say: a");
+    await until(`settle ${settled}`, () => (settles(pi.events) >= settled ? true : undefined), 30_000);
+  };
+
+  await turn("p1", 1);
+  send("on", "/chef");
+  await answered("on");
+  await turn("p2", 2);
+  send("off", "/chef off");
+  await answered("off");
+  await turn("p3", 3);
+  pi.proc.stdin!.end();
+  assert.equal(await pi.exited, 0);
+  assert.deepEqual(readFileSync(record, "utf8").split("\n").filter(Boolean), ["none", "chef", "none"]);
 });
 
 test("the chef emits a cooks snapshot on each change, again on request, and role off on /chef off", async () => {

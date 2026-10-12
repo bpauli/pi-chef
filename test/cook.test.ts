@@ -18,6 +18,7 @@ function fakePi() {
       handlers.set(event, [...(handlers.get(event) ?? []), handler]);
       return () => undefined;
     },
+    events: { on: () => () => undefined },
     sendUserMessage: (text: string, options?: { deliverAs?: string }) => {
       sent.push({ text, deliverAs: options?.deliverAs });
     },
