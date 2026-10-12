@@ -2,7 +2,7 @@
 
 Each release has one section `## <version>`. The release workflow uses the section text as the notes of the GitHub release. Write the section before you push the tag.
 
-## Unreleased
+## 0.2.0
 
 ### Added
 
