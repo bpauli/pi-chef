@@ -52,6 +52,8 @@ const FRAME: Record<Role, string> = {
   chef: `The user chose the superpowers recipe. You run the kitchen by its skills. Your human partner is the human who talks to you. Your cooks are the subagents of the skills: a chef_dispatch with a complete brief is a subagent dispatch. The kitchen owns the worktrees, the branches, and their landing, so skip the skill steps that use using-git-worktrees or finishing-a-development-branch. The rules below are always on. ${INDEX_NOTE}`,
 };
 
+const plainDashes = (text: string): string => text.replace(/[\u2014\u2013]/g, "-");
+
 export function loadSkills(dir: string = SUPERPOWERS_DIR): Skill[] {
   const names = readdirSync(dir, { withFileTypes: true })
     .filter((e) => e.isDirectory())
@@ -61,7 +63,7 @@ export function loadSkills(dir: string = SUPERPOWERS_DIR): Skill[] {
     const path = join(dir, name, "SKILL.md");
     const { frontmatter } = parseFrontmatter(readFileSync(path, "utf8"));
     if (!Value.Check(FrontmatterSchema, frontmatter)) throw new Error(`${path} needs a name and a description in its frontmatter`);
-    return { name: frontmatter.name, description: frontmatter.description, path };
+    return { name: frontmatter.name, description: plainDashes(frontmatter.description), path };
   });
 }
 

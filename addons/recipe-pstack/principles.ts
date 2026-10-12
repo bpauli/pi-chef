@@ -51,6 +51,8 @@ const FRAME: Record<Role, string> = {
   chef: "The user chose the pstack principles. You run the kitchen by them. The rules below are always on. The index after them lists each principle, when it applies, and the file that explains it.",
 };
 
+const plainDashes = (text: string): string => text.replace(/[\u2014\u2013]/g, "-");
+
 export function loadPrinciples(dir: string = PSTACK_PRINCIPLES_DIR): Principle[] {
   const names = readdirSync(dir, { withFileTypes: true })
     .filter((e) => e.isDirectory() && e.name.startsWith("principle-"))
@@ -60,7 +62,7 @@ export function loadPrinciples(dir: string = PSTACK_PRINCIPLES_DIR): Principle[]
     const path = join(dir, name, "SKILL.md");
     const { frontmatter } = parseFrontmatter(readFileSync(path, "utf8"));
     if (!Value.Check(FrontmatterSchema, frontmatter)) throw new Error(`${path} needs a name and a description in its frontmatter`);
-    return { name: frontmatter.name, description: frontmatter.description, path };
+    return { name: frontmatter.name, description: plainDashes(frontmatter.description), path };
   });
 }
 

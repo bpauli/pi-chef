@@ -30,6 +30,22 @@ test("each role's block starts with a heading that names the pstack recipe", () 
   for (const role of ROLES) assert.equal(principlesBlock(role, principles).split("\n")[0], "# Recipe: pstack", role);
 });
 
+test("no role's block has an em dash or an en dash, also when a vendored description has them", () => {
+  const dir = mkdtempSync(join(tmpdir(), "chef-principles-"));
+  try {
+    mkdirSync(join(dir, "principle-dash"));
+    writeFileSync(join(dir, "principle-dash", "SKILL.md"), '---\nname: principle-dash\ndescription: "Apply always \u2014 pages 1\u20132."\n---\n\n# Dash\n');
+    const principles = [...loadPrinciples(PSTACK_PRINCIPLES_DIR), ...loadPrinciples(dir)];
+    for (const role of ROLES) {
+      const block = principlesBlock(role, principles);
+      assert.doesNotMatch(block, /[\u2014\u2013]/, role);
+      assert.ok(block.includes("- principle-dash: Apply always - pages 1-2."), `${role}: the description keeps its words`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("each role's block carries its own rules, none of the other role's, and every principle a rule cites is in the index", () => {
   const principles = loadPrinciples(PSTACK_PRINCIPLES_DIR);
   const names = new Set(principles.map((p) => p.name));

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -15,6 +15,12 @@ const vendored = (): string[] =>
 test("each role's block starts with a heading that names the superpowers recipe", () => {
   const skills = loadSkills();
   for (const role of ROLES) assert.equal(superpowersBlock(role, skills).split("\n")[0], "# Recipe: superpowers", role);
+});
+
+test("no role's block has an em dash or an en dash, although a vendored description has one", () => {
+  assert.match(readFileSync(join(SUPERPOWERS_DIR, "executing-plans", "SKILL.md"), "utf8"), /^description: .*\u2014/m, "the vendored description has an em dash");
+  const skills = loadSkills();
+  for (const role of ROLES) assert.doesNotMatch(superpowersBlock(role, skills), /[\u2014\u2013]/, role);
 });
 
 test("each role's index lists its own vendored skills with description and an existing path, and no skill of the other role only", () => {
