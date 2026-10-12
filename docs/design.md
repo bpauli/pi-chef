@@ -181,6 +181,44 @@ Chef mode persists as a `chef-mode` session entry (`pi.appendEntry`), so a resum
 
 Double loading is guarded with `globalThis[Symbol.for("chef.loaded")]`. The guard is cleared on `session_shutdown`, so `/reload` registers the tools again.
 
+## Integration events
+
+Chef has no hard dependency on a terminal multiplexer or another Pi package. It publishes the open tasks on `pi.events`, and optional add-on packages show them. `pi.events` is in-process: all extensions loaded in one Pi process share it, and no other process sees it.
+
+The event is a versioned snapshot, not a delta, so a consumer converges from any snapshot it receives:
+
+```ts
+const COOKS_EVENT = "pi-chef:cooks:v1";
+const COOKS_REQUEST_EVENT = "pi-chef:cooks:v1:request";
+
+interface CooksSnapshot {
+  version: 1;
+  sessionId: string;                     // the chef Pi session id
+  role: "owner" | "read-only" | "off";   // off: chef mode closed in this session
+  tasks: CookTask[];                     // open tasks only; a task that leaves the list is closed
+}
+interface CookTask {
+  id: string; project: string; title: string;
+  state: "queued" | "cooking" | "idle";
+  run?: number; since?: number;
+  activity?: string;                     // cooking: one line
+  outcome?: { kind: "done" | "needs_decision" | "blocked" | "failed" | "stopped"; text: string }; // idle
+  worktree: string; branch: string; taskDir: string;
+  transcript?: string;                   // the run file of `run`
+  viewer: { command: string; args: string[] }; // node <extension>/watch.ts <task dir>
+}
+```
+
+`extension/events.ts` owns the contract and the pure builder `cooksSnapshot(sessionId, board, paths)`. It imports no Pi types. Add-ons import the types with `import type` only, so no runtime code crosses a package. Each add-on checks the fields it reads with typebox, because the event comes from another package.
+
+Emit rules, in `chef.ts`:
+
+- After each tick, owner or read-only, the session builds the snapshot from the board. It emits only when the serialized snapshot differs from the last one it emitted.
+- On `COOKS_REQUEST_EVENT` it emits its last snapshot again. A consumer that starts late, or after `/reload`, sends the request on `session_start`.
+- `/chef off` and `session_shutdown` emit `role: "off"` with no tasks. A reopen for `/chef takeover` does not.
+
+Each consumer is the one writer of what it shows (a herdr tab status, a FleetView record). Chef never writes it.
+
 ## herdr tabs
 
 When the chef runs inside herdr (`HERDR_ENV=1` and `HERDR_WORKSPACE_ID` at activation), the owner session opens one herdr tab per cooking task, so the human can watch the cook work. The tab is a watch pane only. The cook stays a detached `pi --mode json -p` process, and the human still steers through the chef. A read-only session does nothing with tabs, so the tabs have one writer.
@@ -228,9 +266,10 @@ About 3k lines of source. Any flow passes through at most three files: tool, the
 | `cooks.ts` | Launch argv, spawn, the liveness map, group signals, prompt text. |
 | `git.ts` | Worktree ensure and remove, landed facts, diffstat. |
 | `kitchen.ts` | The deep module: the seven operations plus `tick`. It imports no Pi types. |
-| `chef.ts` | The Pi shell: tools as one-call adapters, `/chef`, the widget, the `Waker`, the cook tabs, activation. |
+| `chef.ts` | The Pi shell: tools as one-call adapters, `/chef`, the widget, the `Waker`, the cook tabs, the cooks snapshot emission, activation. |
 | `cook.ts` | The cook half. |
 | `principles.ts` | Loads the vendored principles and builds the block for each role. |
+| `events.ts` | The integration contract: the cooks snapshot types, the event names, and the pure builder. No Pi types. |
 | `herdr.ts` | The only herdr caller: list, open, and report cook tabs, and the in-memory `CookTabs` record. |
 | `watch.ts` | The viewer a cook tab runs under plain Node. Node builtins only. |
 
@@ -280,6 +319,7 @@ PR creation or merge automation (a brief can tell the cook to run `gh`), per-pro
 - Git (real temp repos): ensure worktree twice, landed by base and by remote branch, dirty refusal, a stale remote-tracking ref never deletes the branch, a detached HEAD is off the branch.
 - Kitchen e2e (real cook Pi processes, fake model, temp `PI_CODING_AGENT_DIR` and `CHEF_HOME`): dispatch to two projects; a cook reports `needs_decision`; `send` relaunches and the cook commits and reports `done`; a message sent mid-run is steered; stop, and send right after a stop; close refuses then succeeds; a new `Kitchen` instance adopts a live cook and derives the outcome of a cook that exited while no owner ran; a second tick does nothing; a bad model and a broken worktree path are launch failures that a send retries; a broken task.json and config.json do not stop the tick; a cook that never exits is killed; a ghost cook blocks a second launch; a lost lease is found before any write; a read-only session promotes.
 - Chef e2e (a chef `pi --mode rpc --chef` on the fake model): tools are active only with `--chef`; a dispatch leads to one `chef-wake` that starts a turn; a wake queued behind a busy turn is marked notified only on delivery; a wake dropped with `clear_queue` is sent again after the turn settles; the model gets the chef principles with `--chef` and after `/chef`, and none in a plain session or after `/chef off`. A kitchen e2e test proves the cook's model gets the cook principles and no chef rules.
+- Integration events: `cooksSnapshot` per state (cooking with activity and transcript, idle with each outcome, idle before a first run, queued, closed absent, the viewer arguments). Chef e2e with `test/cooks-recorder.ts` loaded by `-e`: a dispatch emits snapshots that go from no task to cooking to idle done, with no two equal snapshots in a row; a request gets the current snapshot again; `/chef off` emits role off, and nothing follows.
 - Viewer (a real `node extension/watch.ts` process on a temp task dir): it shows the tool line, the text, and the report while the run file grows, with a character split across two appends; a provider error; a newer run file switches with a separator; a `closed` event makes it exit 0.
 - herdr (`CookTabs` against `test/fake-herdr.mjs`, which logs its argv and keeps its tabs in a JSON file): a cooking task opens exactly one tab with the label, cwd, and viewer command, and the next sync calls herdr not at all; the command starts the viewer from a shell; an existing tab is adopted; each state change reports once with the mapped state; a closed tab is not reopened for the same run; a herdr failure is an error line. Chef e2e with the fake binary: inside herdr a dispatch opens one tab and reports `working`, then `idle` once; without `HERDR_ENV` no herdr call happens. `test/support.ts` deletes every `HERDR_*` variable, so no test reaches the human's live herdr session.
 - Sync (a fixture tree, no network): `tools/sync-pstack.mjs` vendors the principles, drops a removed one, and a second run changes nothing.

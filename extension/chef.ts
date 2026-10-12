@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { ChefError, ChefModeEntrySchema, errorMessage, type Millis, type Notice, type NoticeRef, type Pid, type TaskId, type WakeDetails, WakeDetailsSchema, millis, parseTaskId, runNo } from "./domain.ts";
+import { COOKS_EVENT, COOKS_REQUEST_EVENT, type CooksSnapshot, cooksSnapshot, offSnapshot } from "./events.ts";
+import { type Board, ChefError, ChefModeEntrySchema, errorMessage, type Millis, type Notice, type NoticeRef, type Pid, type TaskId, type WakeDetails, WakeDetailsSchema, millis, parseTaskId, runNo } from "./domain.ts";
 import { type RestartNote, boardHeader, outcomeDetail, boardLines, formatAge, formatWake, outcomeText, plural, queuePosition, stateText, statusText } from "./derive.ts";
 import { piInvocation } from "./cooks.ts";
 import { CookTabs, Herdr } from "./herdr.ts";
@@ -121,6 +122,7 @@ export class Waker {
 }
 
 interface ChefSession {
+  sessionId: string;
   store: Store;
   reader: KitchenReader;
   owner: Kitchen | undefined;
@@ -132,6 +134,8 @@ interface ChefSession {
   firstTick: boolean;
   ticking: boolean;
   lastErrors: Set<string>;
+  snapshot: CooksSnapshot | undefined;
+  snapshotKey: string;
 }
 
 const agentDir = (): string => process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
@@ -176,12 +180,14 @@ export function installChef(pi: ExtensionAPI): void {
   };
 
   const openNow = async (ctx: ExtensionContext, takeover: boolean): Promise<ChefSession> => {
-    if (session) close(ctx);
+    if (session) close(ctx, false);
     const store = new Store(kitchenDir(process.env, agentDir()));
-    const self = { pid: process.pid as Pid, sessionId: ctx.sessionManager.getSessionId() };
+    const sessionId = ctx.sessionManager.getSessionId();
+    const self = { pid: process.pid as Pid, sessionId };
     const opened = await Kitchen.open({ store, pi: piInvocation(), chefEntry: CHEF_ENTRY, self }, { takeover });
     const owner = opened.kind === "owner" ? opened.kitchen : undefined;
     const current: ChefSession = {
+      sessionId,
       store,
       reader: opened.kind === "owner" ? opened.kitchen : opened.reader,
       owner,
@@ -193,6 +199,8 @@ export function installChef(pi: ExtensionAPI): void {
       firstTick: true,
       ticking: false,
       lastErrors: new Set(),
+      snapshot: undefined,
+      snapshotKey: "",
     };
     current.timer.unref();
     if (owner) {
@@ -209,6 +217,15 @@ export function installChef(pi: ExtensionAPI): void {
   const showErrors = (s: ChefSession, ctx: ExtensionContext, errors: readonly string[]): void => {
     for (const err of errors) if (!s.lastErrors.has(err) && ctx.hasUI) ctx.ui.notify(`chef: ${err}`, "error");
     s.lastErrors = new Set(errors);
+  };
+
+  const publish = (s: ChefSession, board: Board): void => {
+    const snapshot = cooksSnapshot(s.sessionId, board, s.store);
+    const key = JSON.stringify(snapshot);
+    if (key === s.snapshotKey) return;
+    s.snapshot = snapshot;
+    s.snapshotKey = key;
+    pi.events.emit(COOKS_EVENT, snapshot);
   };
 
   const tick = async (ctx: ExtensionContext): Promise<void> => {
@@ -246,6 +263,7 @@ export function installChef(pi: ExtensionAPI): void {
         board = await s.reader.board();
       }
       s.firstTick = false;
+      if (session === s) publish(s, board);
       const lines = boardLines(board, now(), WIDGET_WIDTH);
       const key = lines.join("\n");
       if (key !== s.lastLines && ctx.hasUI) {
@@ -260,8 +278,9 @@ export function installChef(pi: ExtensionAPI): void {
     }
   };
 
-  const close = (ctx: ExtensionContext | undefined): void => {
+  const close = (ctx: ExtensionContext | undefined, announce: boolean): void => {
     if (!session) return;
+    if (announce) pi.events.emit(COOKS_EVENT, offSnapshot(session.sessionId));
     clearInterval(session.timer);
     session.waker?.dispose();
     session.owner?.release();
@@ -275,7 +294,10 @@ export function installChef(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     if (pi.getFlag("chef") === true || chefModeOn(ctx)) await open(ctx);
   });
-  pi.on("session_shutdown", () => close(undefined));
+  pi.on("session_shutdown", () => close(undefined, true));
+  pi.events.on(COOKS_REQUEST_EVENT, () => {
+    if (session?.snapshot) pi.events.emit(COOKS_EVENT, session.snapshot);
+  });
   pi.on("message_end", (event) => {
     const m = event.message;
     const s = session;
@@ -433,7 +455,7 @@ export function installChef(pi: ExtensionAPI): void {
     handler: async (args, ctx) => {
       const verb = args.trim() || "on";
       if (verb === "off") {
-        close(ctx);
+        close(ctx, true);
         pi.setActiveTools(activeWithChef(false));
         pi.appendEntry("chef-mode", { on: false });
         ctx.ui.notify("Chef mode is off in this session. Cooks keep running.", "info");

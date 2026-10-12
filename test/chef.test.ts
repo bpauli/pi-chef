@@ -8,7 +8,8 @@ import { TICK_MS, WAKE_TIMING } from "../extension/chef.ts";
 import { scanCooks, signalCook } from "../extension/cooks.ts";
 import { PRINCIPLES_DIR, RULES } from "../extension/principles.ts";
 import { Store } from "../extension/store.ts";
-import { CHEF_ENTRY, COMMIT_STEP, FAKE_HERDR, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, ROOT, type TempKitchen, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
+import type { CooksSnapshot } from "../extension/events.ts";
+import { CHEF_ENTRY, COMMIT_STEP, COOKS_RECORDER, FAKE_HERDR, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, ROOT, type TempKitchen, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
 
 let fake: Awaited<ReturnType<typeof startFakeModel>>;
 let tk: TempKitchen;
@@ -227,6 +228,52 @@ test("a wake that Pi drops from its queue before delivery is derived and sent ag
   assert.equal(wakes.length, 1, "the dropped wake was derived again and sent once");
   assert.ok(chef.events.indexOf(wakes[0]!) > firstSettle, "the wake came after the turn it was dropped from");
   assert.deepEqual(store.readEvents(store.listTaskIds()[0]!).map((e) => e.type), ["notified"]);
+});
+
+test("the chef emits a cooks snapshot on each change, again on request, and role off on /chef off", async () => {
+  tk = tempKitchen();
+  const repo = makeRepo(tk.home, "api");
+  const record = join(tk.home, "cooks.jsonl");
+  const brief = `STEP bash: sleep ${(3 * TICK_MS) / 1000}\n${REPORT_STEP("done", "slept")}`;
+  const script = [
+    `STEP tool chef_add_project ${JSON.stringify({ path: repo })}`,
+    `STEP tool chef_dispatch ${JSON.stringify({ project: "api", title: "Add a", brief })}`,
+    "STEP say: dispatched",
+    "STEP say: noted",
+  ].join("\n");
+  const chef = startPi("rpc", ["--chef", "-e", COOKS_RECORDER], undefined, { COOKS_RECORD: record });
+  const send = (id: string, message: string) => chef.proc.stdin!.write(`${JSON.stringify({ id, type: "prompt", message })}\n`);
+  const answered = (id: string) => until(`response ${id}`, () => (chef.events.some((e) => e.type === "response" && e.id === id) ? true : undefined));
+  send("p1", script);
+  await until("the wake turn to settle", () => (settles(chef.events) >= 2 ? true : undefined), 60_000);
+  send("r1", "/cooks-request");
+  await answered("r1");
+  send("off", "/chef off");
+  await answered("off");
+  chef.proc.stdin!.end();
+  assert.equal(await chef.exited, 0);
+
+  const lines = readFileSync(record, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as CooksSnapshot | { marker: string });
+  const marker = lines.findIndex((l) => "marker" in l);
+  assert.ok(marker > 0, "the request came after some snapshots");
+  const ticks = lines.slice(0, marker) as CooksSnapshot[];
+  const [answer, off, ...rest] = lines.slice(marker + 1) as CooksSnapshot[];
+  const sessionId = ticks[0]!.sessionId;
+  assert.ok(sessionId, "the snapshot names the chef session");
+  assert.ok(ticks.every((s) => s.version === 1 && s.role === "owner" && s.sessionId === sessionId));
+  for (let i = 1; i < ticks.length; i++) assert.notDeepEqual(ticks[i], ticks[i - 1], `snapshot ${i} repeats the one before it`);
+  const states = ticks.map((s) => s.tasks.map((t) => (t.outcome ? `${t.state} ${t.outcome.kind}` : t.state)).join());
+  assert.equal(states[0], "", "the first tick has no task");
+  const cooking = states.indexOf("cooking");
+  assert.ok(cooking > 0, "the task is seen cooking");
+  assert.equal(states.at(-1), "idle done", "the task ends idle with its outcome");
+  assert.ok(states.slice(cooking).every((s) => s === "cooking" || s === "idle done"), `cooking leads to idle done: ${states.join(" | ")}`);
+  const id = ticks.at(-1)!.tasks[0]!.id;
+  assert.equal(ticks.at(-1)!.tasks[0]!.outcome?.text, "slept");
+  assert.equal(ticks.at(-1)!.tasks[0]!.transcript, join(tk.kitchenDir, "tasks", id, "runs", "1.jsonl"));
+  assert.deepEqual(answer, ticks.at(-1), "a request gets the current snapshot again");
+  assert.deepEqual(off, { version: 1, sessionId, role: "off", tasks: [] });
+  assert.deepEqual(rest, [], "nothing is emitted after chef mode is off");
 });
 
 async function chefDispatchesOneTask(env: NodeJS.ProcessEnv) {
