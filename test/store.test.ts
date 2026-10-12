@@ -139,17 +139,18 @@ test("moveToHandled tolerates a message the cook already moved", () => {
 });
 
 const NO_MODELS = { rules: [], default: [] };
+const NO_PRINCIPLES = { default: undefined, projects: new Map() };
 
 test("loadConfig: a missing file gives defaults, a wrong type gives defaults plus an error that names the field", () => {
   withDir((dir) => {
     const store = new Store(dir);
-    assert.deepEqual(store.loadConfig().config, { maxCooks: 3, models: NO_MODELS, cookArgs: [] });
+    assert.deepEqual(store.loadConfig().config, { maxCooks: 3, models: NO_MODELS, cookArgs: [], principles: NO_PRINCIPLES });
     writeFileSync(join(dir, "config.json"), JSON.stringify({ maxCooks: "three" }));
     const bad = store.loadConfig();
-    assert.deepEqual(bad.config, { maxCooks: 3, models: NO_MODELS, cookArgs: [] });
+    assert.deepEqual(bad.config, { maxCooks: 3, models: NO_MODELS, cookArgs: [], principles: NO_PRINCIPLES });
     assert.match(bad.error ?? "", /config\.json is invalid at \/maxCooks/);
     writeFileSync(join(dir, "config.json"), JSON.stringify({ maxCooks: 1, cookArgs: ["-e", "x.ts"] }));
-    assert.deepEqual(store.loadConfig().config, { maxCooks: 1, models: NO_MODELS, cookArgs: ["-e", "x.ts"] });
+    assert.deepEqual(store.loadConfig().config, { maxCooks: 1, models: NO_MODELS, cookArgs: ["-e", "x.ts"], principles: NO_PRINCIPLES });
   });
 });
 
@@ -203,6 +204,29 @@ test("loadConfig refuses duplicate rule names, a bad thinking level, a bad rule 
       const { config, error } = configFrom(dir, file);
       assert.match(error ?? "", why, JSON.stringify(file));
       assert.deepEqual(config.models, NO_MODELS);
+    }
+  });
+});
+
+test("loadConfig reads principles as a default set, as a default plus per-project sets, and none as a set value", () => {
+  withDir((dir) => {
+    const shorthand = configFrom(dir, { principles: "pstack" });
+    assert.equal(shorthand.error, undefined);
+    assert.deepEqual(shorthand.config.principles, { default: "pstack", projects: new Map() });
+    const full = configFrom(dir, { principles: { default: "none", projects: { obsync: "superpowers", api: "none" } } });
+    assert.equal(full.error, undefined);
+    assert.deepEqual(full.config.principles, { default: "none", projects: new Map([["obsync", "superpowers"], ["api", "none"]]) });
+    assert.deepEqual(configFrom(dir, { principles: { projects: { api: "pstack" } } }).config.principles, { default: undefined, projects: new Map([["api", "pstack"]]) });
+  });
+});
+
+test("loadConfig refuses a bad principle set name and an unknown principles key, each as an error line with the defaults", () => {
+  withDir((dir) => {
+    const cases: unknown[] = [{ principles: "Pstack!" }, { principles: { default: "super powers" } }, { principles: { projects: { api: "" } } }, { principles: { default: "pstack", sets: ["pstack"] } }, { principles: 3 }];
+    for (const file of cases) {
+      const { config, error } = configFrom(dir, file);
+      assert.match(error ?? "", /config\.json is invalid at \/principles/, JSON.stringify(file));
+      assert.deepEqual(config.principles, NO_PRINCIPLES);
     }
   });
 });

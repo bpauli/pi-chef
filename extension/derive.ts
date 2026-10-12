@@ -10,7 +10,9 @@ import {
   type Notice,
   type Outcome,
   type Pid,
+  type PrinciplesConfig,
   type Profile,
+  type ProjectName,
   type RunNo,
   type TaskEvent,
   type TaskId,
@@ -611,4 +613,30 @@ export function modelsPrompt(config: ModelsConfig): string | undefined {
     ...config.rules.map((r) => `- ${r.name}: when ${sentence(r.when)}${r.why ? ` Why: ${sentence(r.why)}` : ""} Models: ${list(r.use)}.`),
     `- Default models: ${list(config.default)}.`,
   ].join("\n");
+}
+
+export type PrincipleAsker = { role: "chef" } | { role: "cook"; project: ProjectName };
+
+/** The principle set that a role gets: a set name, `none`, or undefined for no selection. */
+export function principleSet(config: PrinciplesConfig, asker: PrincipleAsker): string | undefined {
+  return (asker.role === "cook" ? config.projects.get(asker.project) : undefined) ?? config.default;
+}
+
+/** One error line per selected set that no installed add-on provides. */
+export function missingSets(config: PrinciplesConfig, installed: readonly string[]): string[] {
+  const selected = new Set([config.default, ...config.projects.values()]);
+  const missing = [...selected].filter((s): s is string => s !== undefined && s !== "none" && !installed.includes(s));
+  const have = installed.length ? `Installed sets: ${installed.join(", ")}.` : "No principle set add-on is installed.";
+  return missing.map((s) => `config.json selects the principle set "${s}", but no installed add-on provides it. ${have}`);
+}
+
+export function principlesText(config: PrinciplesConfig, installed: readonly string[]): string {
+  const head =
+    config.default !== undefined
+      ? `Principle set: ${config.default}.`
+      : installed.length
+        ? `Principle set: no selection, so every installed set applies (${installed.join(", ")}).`
+        : "Principle set: no selection, and no set is installed.";
+  const projects = [...config.projects].map(([project, set]) => `${project} ${set}`);
+  return projects.length ? `${head} Per project: ${projects.join(", ")}.` : head;
 }

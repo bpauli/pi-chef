@@ -55,7 +55,7 @@ node <path to pi-chef>/extension/watch.ts <kitchen>/tasks/<task id>
 
 ## Integrations
 
-chef itself depends on no terminal multiplexer and no other Pi package. It publishes the open tasks as a cooks snapshot on Pi's in-process event bus (`pi-chef:cooks:v1`), and answers a role query (`pi-chef:role:v1`) with `chef` or `cook` (see `docs/design.md`, "Integration events"). Optional add-on packages in `addons/` use them. Install only the ones you want:
+chef itself depends on no terminal multiplexer and no other Pi package. It publishes the open tasks as a cooks snapshot on Pi's in-process event bus (`pi-chef:cooks:v1`), and answers a role query (`pi-chef:role:v1`) with `chef` or `cook` and the principle set that you selected for that role (see `docs/design.md`, "Integration events"). Optional add-on packages in `addons/` use them. Install only the ones you want:
 
 | Add-on | Does |
 |---|---|
@@ -70,7 +70,7 @@ pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/herdr
 pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/pstack-principles
 ```
 
-A principle set is your choice of how the chef and the cooks work. chef has no principle set of its own and no default. pstack is the first set. Install one set. Another set can follow the same contract (see `docs/design.md`, "Principle sets").
+A principle set is your choice of how the chef and the cooks work. chef has no principle set of its own. pstack is the first set. Install the sets that you want, then select one with `principles` in `config.json` (see "Configuration"). Without a selection, every installed set adds its block. Another set can follow the same contract (see `docs/design.md`, "Principle sets").
 
 ## Configuration
 
@@ -95,11 +95,14 @@ The kitchen lives in `<pi agent dir>/chef` (usually `~/.pi/agent/chef`). Set `CH
     ],
     "default": [{ "model": "anthropic/claude-sonnet-5-5", "thinking": "medium" }, { "model": "openai/gpt-6-astra" }]
   },
-  "cookArgs": ["--no-skills"]
+  "cookArgs": ["--no-skills"],
+  "principles": { "default": "pstack", "projects": { "api": "none" } }
 }
 ```
 
 Every field is optional. `maxCooks` caps the cooks that run at once (default 3). `cookArgs` are extra `pi` arguments for every cook.
+
+`principles` selects the principle set. A value is the name of an installed set, or `none` for no principles. `default` applies to the chef and to the cooks of every project that `projects` does not name. `projects` sets the cooks of one project by project name. `"principles": "pstack"` is short for `{ "default": "pstack" }`. Without `principles`, every installed set adds its block. The chef and each cook read the selection at the start of each turn, so an edit applies at the next turn without a restart. When you select a set that no installed add-on provides, the chef shows a warning. `chef_board` and `/chef board` show the selection.
 
 `models` tells the chef which cook models to use. Each entry is a `provider/id` model and an optional `thinking` level. `use` and `default` take one entry or a list in order of preference.
 

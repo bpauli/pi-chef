@@ -2,7 +2,7 @@
 
 An optional principle set for [pi-chef](../../README.md). With it, the chef and every cook work by the principles of [pstack](https://github.com/cursor/plugins/tree/main/pstack), the agent plugin by Lauren Tan. The add-on vendors the 24 `principle-*` skills from pstack into `principles/`, under pstack's MIT license (`principles/LICENSE`). `principles/SOURCE.md` names the upstream commit.
 
-pi-chef has no principle set of its own. You choose one by installing its add-on. This is the pstack set. Another set follows the contract in `docs/design.md`, "Principle sets".
+pi-chef has no principle set of its own. You install the add-on of each set that you want, and you select a set in the kitchen `config.json` with `principles`, as a default and per project (see the pi-chef README, "Configuration"). This is the pstack set, with the name `pstack`. Another set follows the contract in `docs/design.md`, "Principle sets".
 
 The add-on adds a block with the heading `# Principles: pstack` to the system prompt of two roles:
 
@@ -25,7 +25,7 @@ Cooks load your installed Pi packages, so each cook also loads this add-on. To g
 
 ## How it works
 
-At the start of each turn, the add-on asks pi-chef for the role of its Pi process with the role query on `pi.events` (`pi-chef:role:v1`, see `docs/design.md`, "Integration events"). For `chef` or `cook` it appends that role's block to the system prompt. For no role it adds nothing. Because it asks at each turn, `/chef` and `/chef off` change the next turn.
+At the start of each turn, the add-on asks pi-chef for the role of its Pi process with the role query on `pi.events` (`pi-chef:role:v1`, see `docs/design.md`, "Integration events"). For `chef` or `cook` it appends that role's block to the system prompt, unless the answer selects another set or `none`. For no role it adds nothing. Because it asks at each turn, `/chef`, `/chef off`, and an edit of `principles` in `config.json` change the next turn. The add-on also answers the set discovery event (`pi-chef:principle-sets:v1`) with `pstack`, so the chef can warn when you select a set that is not installed.
 
 ## Update the vendored principles
 

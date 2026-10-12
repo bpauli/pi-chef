@@ -237,6 +237,35 @@ test("with the pstack principles add-on the cook's model receives the cook contr
   assert.ok(prompt.includes("\n# Principles: pstack\n"), "the block heading names the pstack set");
 });
 
+const promptOf = (notice: Notice): string => (notice.outcome.kind === "done" ? notice.outcome.summary : "");
+
+test("a cook gets the principle set of its project, else the default set, and a project set to none gets no block", async () => {
+  const { kitchen } = await setup({ cookArgs: ["-e", FAKE_PROVIDER, "-e", PSTACK_PRINCIPLES_ADDON], principles: { default: "pstack", projects: { web: "none" } } });
+  const { view: api } = await kitchen.dispatch({ project: "api", title: "Default set", brief: "STEP echo-system:" });
+  const { view: web } = await kitchen.dispatch({ project: "web", title: "No set", brief: "STEP echo-system:" });
+  const apiPrompt = promptOf(await waitNotice(kitchen, api.spec.id));
+  const webPrompt = promptOf(await waitNotice(kitchen, web.spec.id));
+  assertCookContract(apiPrompt, "Default set");
+  assert.ok(apiPrompt.includes("\n# Principles: pstack\n"), "api falls back to the default set");
+  assert.match(webPrompt, /You are a cook in chef's kitchen: a Pi agent that works alone on task web-1 "No set"/);
+  assert.ok(!webPrompt.includes("# Principles:"), "web is set to none");
+});
+
+test("a config.json edit between two runs of a task changes the cook's principle set block at the next run", async () => {
+  const cookArgs = ["-e", FAKE_PROVIDER, "-e", PSTACK_PRINCIPLES_ADDON];
+  const { kitchen } = await setup({ cookArgs, principles: { projects: { api: "none" } } });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Live", brief: "STEP echo-system:\nSTEP echo-system:" });
+  const first = promptOf(await waitNotice(kitchen, view.spec.id));
+  assertCookContract(first, "Live");
+  assert.ok(!first.includes("# Principles:"), "run 1: api is set to none");
+
+  writeFileSync(join(tk.kitchenDir, "config.json"), JSON.stringify({ model: FAKE_MODEL, cookArgs, principles: "pstack" }));
+  await kitchen.send(view.spec.id, "again");
+  const second = await waitNotice(kitchen, view.spec.id);
+  assert.equal(second.run, 2);
+  assert.ok(promptOf(second).includes("\n# Principles: pstack\n"), "run 2: the default set pstack");
+});
+
 test("a role request in a cook process gets cook", async () => {
   const { kitchen } = await setup({ cookArgs: ["-e", FAKE_PROVIDER, "-e", ROLE_RECORDER] });
   const record = join(tk.home, "roles.txt");

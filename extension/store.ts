@@ -14,7 +14,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
@@ -48,6 +48,11 @@ import { type Claim, EMPTY_RUN, type RunFacts, type RunRecord, type TaskRecord, 
 
 export function kitchenDir(env: NodeJS.ProcessEnv, agentDir: string): string {
   return env.CHEF_HOME || join(agentDir, "chef");
+}
+
+/** The kitchen that holds a task directory, `<kitchen>/tasks/<id>`. */
+export function kitchenOfTaskDir(taskDir: string): string {
+  return dirname(dirname(taskDir));
 }
 
 export interface Snapshot {

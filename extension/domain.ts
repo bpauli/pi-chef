@@ -139,6 +139,12 @@ export const ModelRuleSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const SetNameSchema = Type.String({ pattern: "^[a-z0-9-]+$", description: "a principle set name, or none" });
+const PrinciplesSchema = Type.Union([
+  SetNameSchema,
+  Type.Object({ default: Type.Optional(SetNameSchema), projects: Type.Optional(Type.Record(Type.String(), SetNameSchema)) }, { additionalProperties: false }),
+]);
+
 export const ConfigSchema = Type.Object(
   {
     maxCooks: Type.Optional(Type.Integer({ minimum: 1 })),
@@ -148,6 +154,7 @@ export const ConfigSchema = Type.Object(
       Type.Object({ rules: Type.Optional(Type.Array(ModelRuleSchema)), default: Type.Optional(ProfilesSchema) }, { additionalProperties: false }),
     ),
     cookArgs: Type.Optional(Type.Array(Type.String(), { description: "extra pi args for every cook" })),
+    principles: Type.Optional(PrinciplesSchema),
   },
   { additionalProperties: false },
 );
@@ -163,12 +170,18 @@ export interface ModelsConfig {
   rules: ModelRule[];
   default: Profile[];
 }
+/** Each value is a set name or `none`. An unset value is no selection: every installed set adds its block. */
+export interface PrinciplesConfig {
+  default: string | undefined;
+  projects: ReadonlyMap<string, string>;
+}
 export interface Config {
   maxCooks: number;
   models: ModelsConfig;
   cookArgs: string[];
+  principles: PrinciplesConfig;
 }
-export const DEFAULT_CONFIG: Config = { maxCooks: 3, models: { rules: [], default: [] }, cookArgs: [] };
+export const DEFAULT_CONFIG: Config = { maxCooks: 3, models: { rules: [], default: [] }, cookArgs: [], principles: { default: undefined, projects: new Map() } };
 
 const listOf = (p: Profile | Profile[]): Profile[] => (Array.isArray(p) ? p : [p]);
 
@@ -191,6 +204,10 @@ export function configOf(file: ConfigFile, path: string): Config {
       default: file.models?.default === undefined ? shorthand : listOf(file.models.default),
     },
     cookArgs: file.cookArgs ?? [],
+    principles:
+      typeof file.principles === "string"
+        ? { default: file.principles, projects: new Map() }
+        : { default: file.principles?.default, projects: new Map(Object.entries(file.principles?.projects ?? {})) },
   };
 }
 

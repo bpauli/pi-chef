@@ -4,7 +4,7 @@ import { closeSync, mkdtempSync, openSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { type Pid, type TaskSpec, millis, parseProjectName, runNo } from "../extension/domain.ts";
+import { DEFAULT_CONFIG, type Pid, type TaskSpec, millis, parseProjectName, runNo } from "../extension/domain.ts";
 import { type CookEnd, CookTable, alive, cookArgv, firstPrompt, followUpPrompt, launchCook, pidStart, runsSession, signalCook } from "../extension/cooks.ts";
 
 const spec: TaskSpec = {
@@ -43,14 +43,14 @@ test("cookArgv runs the same pi in json print mode on the task session with the 
     sessionDir: "/k/tasks/api-1/session",
     taskDir: "/k/tasks/api-1",
     profile: { model: "fake/scripted", thinking: "low" },
-    config: { maxCooks: 3, models: { rules: [], default: [] }, cookArgs: ["-e", "/x.ts"] },
+    config: { ...DEFAULT_CONFIG, cookArgs: ["-e", "/x.ts"] },
     fds: { stdout: 0, stderr: 0 },
   });
   assert.deepEqual(argv, [
     "/pi/cli.js", "--mode", "json", "-p", "--session-id", "0199-sid", "--session-dir", "/k/tasks/api-1/session",
     "-e", "/chef/extension/index.ts", "--model", "fake/scripted", "--thinking", "low", "-e", "/x.ts", "@/k/tasks/api-1/runs/2.prompt.md",
   ]);
-  const bare = { pi: { command: "/bin/pi", args: [] }, chefEntry: "/c", spec, run: runNo(1), promptFile: "/p", sessionDir: "/s", taskDir: "/t", config: { maxCooks: 3, models: { rules: [], default: [] }, cookArgs: [] }, fds: { stdout: 0, stderr: 0 } };
+  const bare = { pi: { command: "/bin/pi", args: [] }, chefEntry: "/c", spec, run: runNo(1), promptFile: "/p", sessionDir: "/s", taskDir: "/t", config: { ...DEFAULT_CONFIG, cookArgs: [] }, fds: { stdout: 0, stderr: 0 } };
   const noThinking = cookArgv({ ...bare, profile: { model: "other/model" } });
   assert.deepEqual(noThinking.slice(noThinking.indexOf("--model")), ["--model", "other/model", "@/p"]);
   const piDefault = cookArgv({ ...bare, profile: undefined });
@@ -62,7 +62,7 @@ test("launchCook reports a missing binary through onEnd instead of crashing the 
   const fds = { stdout: openSync(join(dir, "1.jsonl"), "w"), stderr: openSync(join(dir, "1.err"), "w") };
   const ends: CookEnd[] = [];
   const pid = launchCook(
-    { pi: { command: join(dir, "no-such-pi"), args: [] }, chefEntry: "/c", spec: { ...spec, worktree: dir }, run: runNo(1), promptFile: "/p", sessionDir: dir, taskDir: dir, profile: undefined, config: { maxCooks: 3, models: { rules: [], default: [] }, cookArgs: [] }, fds },
+    { pi: { command: join(dir, "no-such-pi"), args: [] }, chefEntry: "/c", spec: { ...spec, worktree: dir }, run: runNo(1), promptFile: "/p", sessionDir: dir, taskDir: dir, profile: undefined, config: { ...DEFAULT_CONFIG, cookArgs: [] }, fds },
     (end) => ends.push(end),
   );
   assert.equal(pid, undefined);

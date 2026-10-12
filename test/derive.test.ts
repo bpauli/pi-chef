@@ -26,10 +26,13 @@ import {
   deriveTask,
   foldRunLine,
   formatWake,
+  missingSets,
   modelsPrompt,
   noticeFor,
   outcomeOf,
   plan,
+  principleSet,
+  principlesText,
   selectModels,
   statusText,
 } from "../extension/derive.ts";
@@ -657,4 +660,37 @@ test("the chef's models section lists each rule with when, why, and models, then
     ].join("\n"),
   );
   assert.equal(modelsPrompt({ rules: [], default: MODELS.default }), undefined);
+});
+
+const principlesOf = (dflt: string | undefined, projects: Record<string, string> = {}) => ({ default: dflt, projects: new Map(Object.entries(projects)) });
+const cookOf = (project: string) => ({ role: "cook" as const, project: parseProjectName(project) });
+
+test("principleSet gives the chef the default set, a cook its project's set or else the default, and undefined when nothing is selected", () => {
+  const config = principlesOf("pstack", { obsync: "superpowers", api: "none" });
+  assert.equal(principleSet(config, { role: "chef" }), "pstack");
+  assert.equal(principleSet(config, cookOf("obsync")), "superpowers");
+  assert.equal(principleSet(config, cookOf("api")), "none");
+  assert.equal(principleSet(config, cookOf("web")), "pstack");
+  assert.equal(principleSet(config, cookOf("constructor")), "pstack", "a project named like an Object property gets the default");
+  const projectsOnly = principlesOf(undefined, { obsync: "superpowers" });
+  assert.equal(principleSet(projectsOnly, { role: "chef" }), undefined);
+  assert.equal(principleSet(projectsOnly, cookOf("web")), undefined);
+  assert.equal(principleSet(projectsOnly, cookOf("obsync")), "superpowers");
+});
+
+test("missingSets names each selected set that no add-on provides once, and never none", () => {
+  const config = principlesOf("superpowers", { a: "superpowers", b: "none", c: "pstack", d: "house" });
+  assert.deepEqual(missingSets(config, ["pstack"]), [
+    'config.json selects the principle set "superpowers", but no installed add-on provides it. Installed sets: pstack.',
+    'config.json selects the principle set "house", but no installed add-on provides it. Installed sets: pstack.',
+  ]);
+  assert.deepEqual(missingSets(principlesOf("pstack"), []), ['config.json selects the principle set "pstack", but no installed add-on provides it. No principle set add-on is installed.']);
+  assert.deepEqual(missingSets(principlesOf("none"), []), []);
+  assert.deepEqual(missingSets(principlesOf(undefined), []), []);
+});
+
+test("principlesText names the selected default set and the per-project sets, or says that every installed set applies", () => {
+  assert.equal(principlesText(principlesOf("pstack", { api: "none" }), ["pstack"]), "Principle set: pstack. Per project: api none.");
+  assert.equal(principlesText(principlesOf(undefined), ["pstack", "superpowers"]), "Principle set: no selection, so every installed set applies (pstack, superpowers).");
+  assert.equal(principlesText(principlesOf(undefined), []), "Principle set: no selection, and no set is installed.");
 });

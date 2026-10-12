@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { after, afterEach, before, test } from "node:test";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { TICK_MS, WAKE_TIMING } from "../extension/chef.ts";
 import { scanCooks, signalCook } from "../extension/cooks.ts";
 import { PSTACK_PRINCIPLES_DIR, PSTACK_RULES } from "../addons/pstack-principles/principles.ts";
 import { Store } from "../extension/store.ts";
 import type { CooksSnapshot } from "../extension/events.ts";
-import { CHEF_ENTRY, COMMIT_STEP, COOKS_RECORDER, PSTACK_PRINCIPLES_ADDON, ROLE_RECORDER, FAKE_HERDR, HERDR_ADDON, SUBAGENTS_ADDON, installFakeSubagents, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, ROOT, type TempKitchen, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
+import { CHEF_ENTRY, COMMIT_STEP, COOKS_RECORDER, PSTACK_PRINCIPLES_ADDON, ROLE_RECORDER, FAKE_HERDR, HERDR_ADDON, SUBAGENTS_ADDON, installFakeSubagents, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, ROOT, type TempKitchen, makeRepo, sleep, startFakeModel, tempKitchen, until } from "./support.ts";
 
 let fake: Awaited<ReturnType<typeof startFakeModel>>;
 let tk: TempKitchen;
@@ -136,6 +138,41 @@ test("with the pstack principles add-on the chef principles follow /chef on and 
   send("off", "/chef off");
   await answered("off");
   assertChefPrinciples(await echoAfter("p3", "again", 3), false, "after /chef off");
+  pi.proc.stdin!.end();
+  assert.equal(await pi.exited, 0);
+});
+
+const writeConfig = (config: Record<string, unknown>) => writeFileSync(join(tk.kitchenDir, "config.json"), JSON.stringify({ model: FAKE_MODEL, cookArgs: ["-e", FAKE_PROVIDER], ...config }));
+
+test("the chef's model gets the pstack block when config.json selects pstack, and no block when it selects none or a set that is not installed", async () => {
+  tk = tempKitchen();
+  const echo = async (principles: unknown) => {
+    writeConfig({ principles });
+    const run = startPi("json", ["--chef", "-e", PSTACK_PRINCIPLES_ADDON], "STEP echo-system:");
+    run.proc.stdin!.end();
+    assert.equal(await run.exited, 0);
+    return lastAssistantText(run.events);
+  };
+  assertChefPrinciples(await echo("pstack"), true, "default pstack");
+  assertChefPrinciples(await echo({ projects: { api: "pstack" } }), true, "a project selection only, so no selection for the chef");
+  assertChefPrinciples(await echo({ default: "none", projects: { api: "pstack" } }), false, "default none");
+  assertChefPrinciples(await echo("superpowers"), false, "default superpowers, not installed");
+});
+
+const NotifySchema = Type.Object({ type: Type.Literal("extension_ui_request"), method: Type.Literal("notify"), message: Type.String() });
+const notes = (events: Event[]): string[] => events.flatMap((e) => (Value.Check(NotifySchema, e) ? [e.message] : []));
+
+test("a principle set selection that no installed add-on provides shows one warning line, and the board names the selected sets", async () => {
+  tk = tempKitchen({ principles: { default: "house", projects: { api: "pstack" } } });
+  const pi = startPi("rpc", ["--chef", "-e", PSTACK_PRINCIPLES_ADDON]);
+  const warning = 'chef: config.json selects the principle set "house", but no installed add-on provides it. Installed sets: pstack.';
+  await until("the warning", () => (notes(pi.events).includes(warning) ? true : undefined));
+  await sleep(3 * TICK_MS);
+  assert.deepEqual(notes(pi.events).filter((n) => n.includes("principle set")), [warning], "shown once across ticks");
+
+  pi.proc.stdin!.write(`${JSON.stringify({ id: "board", type: "prompt", message: "/chef board" })}\n`);
+  const board = await until("the board", () => notes(pi.events).find((n) => n.includes("Principle set:")));
+  assert.match(board, /^Principle set: house\. Per project: api pstack\.$/m);
   pi.proc.stdin!.end();
   assert.equal(await pi.exited, 0);
 });
