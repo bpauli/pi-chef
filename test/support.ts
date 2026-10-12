@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -14,6 +14,20 @@ export const SLOW_EXIT = join(ROOT, "test/slow-exit.ts");
 export const NEVER_EXIT = join(ROOT, "test/never-exit.ts");
 export const FAKE_HERDR = join(ROOT, "addons/herdr/test/fake-herdr.mjs");
 export const HERDR_ADDON = join(ROOT, "addons/herdr/index.ts");
+export const SUBAGENTS_ADDON = join(ROOT, "addons/subagents/index.ts");
+
+/** Installs a fake pi-subagents under an npm root, the way Pi lays out an npm package. Returns the path of its external-runs module. */
+export function installFakeSubagents(npmRoot: string): string {
+  const dir = join(npmRoot, "node_modules", "pi-subagents");
+  mkdirSync(join(dir, "src", "api"), { recursive: true });
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify({ name: "pi-subagents", type: "module", exports: { "./external-runs": { types: "./src/api/external-runs.d.ts", default: "./src/api/external-runs.js" } } }),
+  );
+  const module = join(dir, "src", "api", "external-runs.js");
+  copyFileSync(join(ROOT, "addons/subagents/test/fake-external-runs.mjs"), module);
+  return module;
+}
 export const COOKS_RECORDER = join(ROOT, "test/cooks-recorder.ts");
 export const FAKE_MODEL = "fake/scripted";
 

@@ -9,7 +9,7 @@ import { scanCooks, signalCook } from "../extension/cooks.ts";
 import { PRINCIPLES_DIR, RULES } from "../extension/principles.ts";
 import { Store } from "../extension/store.ts";
 import type { CooksSnapshot } from "../extension/events.ts";
-import { CHEF_ENTRY, COMMIT_STEP, COOKS_RECORDER, FAKE_HERDR, HERDR_ADDON, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, ROOT, type TempKitchen, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
+import { CHEF_ENTRY, COMMIT_STEP, COOKS_RECORDER, FAKE_HERDR, HERDR_ADDON, SUBAGENTS_ADDON, installFakeSubagents, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, ROOT, type TempKitchen, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
 
 let fake: Awaited<ReturnType<typeof startFakeModel>>;
 let tk: TempKitchen;
@@ -314,4 +314,35 @@ test("inside herdr the herdr add-on opens one cook tab per dispatched task and r
 test("without HERDR_ENV the herdr add-on never calls herdr", async () => {
   const { calls } = await chefDispatchesOneTask({ HERDR_WORKSPACE_ID: "w9" });
   assert.equal(calls, undefined);
+});
+
+test("with pi-subagents installed the subagents add-on shows the dispatched task as a FleetView job until /chef off", async () => {
+  tk = tempKitchen();
+  installFakeSubagents(join(tk.agentDir, "npm"));
+  const repo = makeRepo(tk.home, "api");
+  const log = join(tk.home, "fleet.log");
+  const brief = `STEP bash: sleep ${(3 * TICK_MS) / 1000}\n${REPORT_STEP("done", "slept")}`;
+  const script = [
+    `STEP tool chef_add_project ${JSON.stringify({ path: repo })}`,
+    `STEP tool chef_dispatch ${JSON.stringify({ project: "api", title: "Add a", brief })}`,
+    "STEP say: dispatched",
+    "STEP say: noted",
+  ].join("\n");
+  const chef = startPi("rpc", ["--chef", "-e", SUBAGENTS_ADDON], undefined, { FAKE_EXTERNAL_RUNS_LOG: log });
+  chef.proc.stdin!.write(`${JSON.stringify({ id: "p1", type: "prompt", message: script })}\n`);
+  await until("the wake turn to settle", () => (settles(chef.events) >= 2 ? true : undefined), 60_000);
+  chef.proc.stdin!.write(`${JSON.stringify({ id: "off", type: "prompt", message: "/chef off" })}\n`);
+  await until("response off", () => (chef.events.some((e) => e.type === "response" && e.id === "off") ? true : undefined));
+  chef.proc.stdin!.end();
+  assert.equal(await chef.exited, 0);
+
+  type Call = ["register", { id: string; source: string; label: string; state: string; sessionId: string }] | ["update", string, string, { state: string }] | ["unregister", string, string];
+  const calls = readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Call);
+  const id = new Store(tk.kitchenDir).listTaskIds()[0]!;
+  const registers = calls.flatMap((c) => (c[0] === "register" ? [c[1]] : []));
+  assert.deepEqual(registers.map((r) => [r.id, r.source, r.label]), [[`chef-${id}`, "pi-chef", `${id} Add a`]]);
+  const states = calls.flatMap((c) => (c[0] === "register" ? [c[1].state] : c[0] === "update" ? [c[3].state] : []));
+  assert.ok(states.includes("running"), `the cook is shown running: ${states.join()}`);
+  assert.equal(states.at(-1), "completed", "the done outcome is shown completed");
+  assert.deepEqual(calls.at(-1), ["unregister", registers[0]!.sessionId, `chef-${id}`], "/chef off removes the job");
 });

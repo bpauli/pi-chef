@@ -60,6 +60,7 @@ chef itself depends on no terminal multiplexer and no other Pi package. It publi
 | Add-on | Does |
 |---|---|
 | `addons/herdr` | Inside herdr, opens a `cook <task id>` tab per cooking task that shows the cook live, and shows each cook's state in the herdr sidebar. See `addons/herdr/README.md`. |
+| `addons/subagents` | Shows each open task as a job in the FleetView of [pi-subagents](https://pi.dev/packages/pi-subagents): running, completed, failed, or stopped when it needs you or was stopped. See `addons/subagents/README.md`. |
 
 Pi git sources take no subdirectory, so install an add-on from a local path, for example from the checkout that `pi install git:github.com/bpauli/pi-chef` made:
 

@@ -238,6 +238,25 @@ The tab runs `exec <viewer command> <viewer args...>`, each word shell-quoted, i
 
 Herdr calls are async (`execFile`) with the binary from `HERDR_BIN_PATH`, else `herdr`. Every reply is parsed with typebox. A herdr error never throws into the event emitter: it becomes an error line, shown with `ctx.ui.notify` once while it lasts.
 
+## Add-on: FleetView jobs
+
+`addons/subagents/` is the package `pi-chef-subagents`. It shows each open task as one external job in the FleetView of pi-subagents, in owner and read-only sessions. The add-on is the one writer of the jobs whose id starts with `chef-`.
+
+At the first snapshot that is not `off`, it looks for pi-subagents in `<cwd>/.pi/npm/node_modules` (a project install), then in `<agent dir>/npm/node_modules`. It reads `exports["./external-runs"].default` from the package's `package.json`, joins it to the package directory, and imports that file by its absolute path. Without the package it does nothing and gives one info notification. The lookup runs once per process.
+
+| Task | `state` | `currentAction` | `preview` |
+|---|---|---|---|
+| queued | `queued` | `queued` | |
+| cooking | `running` | the activity | |
+| idle, done | `completed` | `done: <summary>` | the summary |
+| idle, failed | `failed` | `failed: <reason>` | the reason |
+| idle, needs decision or blocked | `stopped` | `needs decision: <question>`, `blocked: <reason>` | the question or reason |
+| idle, stopped | `stopped` | `stopped` | |
+
+The external-run API has no state for "needs the human". FleetView draws `stopped` as a warning glyph, the same as `paused`, and `failed` as an error glyph, so a task that waits for the human is `stopped`. The job id is `chef-<task id>`, `source` is `pi-chef`, the label is `<task id> <title>`, and `transcriptPath` is the snapshot's `transcript`. `startedAt` is the start of the current or last run, `endedAt` the time the task went idle. Text is cut to the documented limits (160 characters for a label or action, 4096 for a preview or path), and an empty text is left out, because the API refuses an empty string.
+
+The add-on keeps the display fields it last wrote per task and writes only when they change. An update sends every display field, with `undefined` for one that went away, so an old preview never stays. A task that leaves the snapshot, every task on `role: "off"`, and every task on `session_shutdown` are unregistered. A register that fails because an earlier copy of the add-on left the job (for example across `/reload`) becomes an update.
+
 ## Principles
 
 `principles/<name>/SKILL.md` holds the 24 pstack principle skills, vendored by `tools/sync-pstack.mjs` (MIT, `principles/LICENSE`, upstream commit in `principles/SOURCE.md`). These files are the single source. `loadPrinciples` parses `name` and `description` from each frontmatter with typebox, and a file without them is a load error. `principlesBlock(role, principles)` is pure. It returns a frame, the always-on rules of that role (`RULES` in `extension/principles.ts`, each rule names its principles), and an index derived from the files: one line per principle with its name, its description, and its absolute path. The block ends with "Before you apply a principle, read its file in full."
@@ -282,6 +301,8 @@ The add-ons live outside `extension/` and import no runtime code from it:
 |---|---|
 | `addons/herdr/index.ts` | The `pi-chef-herdr` entry: the snapshot listener, the sync queue, the notifications. |
 | `addons/herdr/herdr.ts` | The only herdr caller: list, open, and report cook tabs, and the in-memory `CookTabs` record. |
+| `addons/subagents/index.ts` | The `pi-chef-subagents` entry: the snapshot listener, the FleetView session identity, the notifications. |
+| `addons/subagents/fleet.ts` | Finds and loads `pi-subagents/external-runs`, maps a task to its job, and keeps the jobs this add-on wrote (`FleetRecords`). |
 
 Every file line and run-file line is checked with `Value.Check` before a field is read. A bad line is skipped and counted, never a crash of the tick. The tick reads the kitchen through one `Store.snapshot`, each file in isolation: a task whose `task.json` does not parse is listed on the board as `broken` with the reason, a bad `config.json` yields the defaults plus an error line, a bad project file is skipped plus an error line. The shell shows an error when it starts and again only after it went away and came back. `task.json` is written through tmp plus rename inside the task directory, whose `mkdir` is the exclusive step.
 
@@ -313,6 +334,17 @@ Measured on the herdr CLI at `/usr/bin/herdr`:
 - A CLI error is JSON on stderr, `{"error":{"code","message"}}`, with exit 1. A missing pane is `pane_not_found`.
 - Node refuses to strip types from a `.ts` file under `node_modules` (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`, Node 24.21). `pi install git:...` and a local path install chef outside `node_modules`, so the viewer runs as `.ts`.
 
+### pi-subagents
+
+Measured on the installed Pi 1.0.3 binary with pi-subagents 0.76.0:
+
+- `pi.events` is in-process. All extensions loaded in one Pi process share it.
+- From a separately installed extension, `import("pi-subagents/external-runs")` does not resolve. `createRequire(<agent dir>/npm/package.json).resolve(...)` and `Bun.resolveSync(..., <agent dir>/npm)` do not resolve it either.
+- Reading `<agent dir>/npm/node_modules/pi-subagents/package.json`, taking `exports["./external-runs"].default`, and importing that absolute path works. `registerExternalRun` then writes to the `Symbol.for("pi-subagents.external-runs.v2")` registry on `globalThis` that the loaded pi-subagents reads.
+- FleetView lists the external runs of `sessionManager.getSessionFile() ?? sessionManager.getSessionId()` (`src/shared/session-identity.js`), not of the session id alone. The add-on registers its jobs under that identity from its own `ctx`, not under the snapshot's `sessionId`.
+- Pi installs a project npm package under `<cwd>/.pi/npm/node_modules` and a user one under `<agent dir>/npm/node_modules` (`getManagedNpmInstallPath`). A git source takes no subdirectory, so an add-on installs from a local path.
+- `registerExternalRun` throws for a job that is already registered, and `updateExternalRun` for one that is not. An empty optional text throws. Control and escape sequences in text are removed by the API.
+
 ## Grafts and fixes from the arena
 
 - From the Sonnet candidate: the settle-aware cook poller (claim before steer, stop at `agent_before_settle`), the owner and reader type split, inbox writes by tmp plus rename, and the restart prefix in the first wake.
@@ -332,4 +364,5 @@ PR creation or merge automation (a brief can tell the cook to run `gh`), per-pro
 - Integration events: `cooksSnapshot` per state (cooking with activity and transcript, idle with each outcome, idle before a first run, queued, closed absent, the viewer arguments). Chef e2e with `test/cooks-recorder.ts` loaded by `-e`: a dispatch emits snapshots that go from no task to cooking to idle done, with no two equal snapshots in a row; a request gets the current snapshot again; `/chef off` emits role off, and nothing follows.
 - Viewer (a real `node extension/watch.ts` process on a temp task dir): it shows the tool line, the text, and the report while the run file grows, with a character split across two appends; a provider error; a newer run file switches with a separator; a `closed` event makes it exit 0.
 - herdr add-on (`addons/herdr/test/`, `CookTabs` and the add-on entry driven by snapshots against `fake-herdr.mjs`, which logs its argv and keeps its tabs in a JSON file): a cooking task opens exactly one tab with the label, cwd, and viewer command, and the next snapshot calls herdr not at all; the command starts the viewer from a shell; an existing tab is adopted; each state change reports once with the mapped state; a closed tab is not reopened for the same run; a read-only or off snapshot calls herdr not at all and the next owner snapshot adopts again; a herdr failure is an error line, shown once; the entry asks for a snapshot at session start and skips another version; outside herdr it does nothing. Chef e2e with the add-on loaded by `-e` and the fake binary: inside herdr a dispatch opens one tab and reports `working`, then `idle` once; without `HERDR_ENV` no herdr call happens. `test/support.ts` deletes every `HERDR_*` variable, so no test reaches the human's live herdr session.
+- FleetView add-on (`addons/subagents/test/`, the add-on entry against a fake pi-subagents package in a temp agent dir whose `external-runs` module records the calls and keeps the jobs): a cooking task registers one `running` job under the session file with its activity and transcript; each outcome maps to its state and action, and an unchanged snapshot writes nothing; a task that leaves the snapshot, role off, and session shutdown unregister; a snapshot before session start is shown at session start; a job left by an earlier copy is updated; a project install is found; without the package nothing is shown and one info notice says so. Chef e2e with the add-on loaded by `-e` and the fake package in the temp agent dir: a dispatch registers one job, shows it `running`, then `completed`, and `/chef off` unregisters it.
 - Sync (a fixture tree, no network): `tools/sync-pstack.mjs` vendors the principles, drops a removed one, and a second run changes nothing.

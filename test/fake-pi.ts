@@ -29,8 +29,13 @@ export function fakePi(cwd = process.cwd()) {
       },
     },
   };
+  /** Emits on the bus and waits for every listener, which `pi.events.emit` does not. */
+  const publish = async (channel: string, data: unknown): Promise<void> => {
+    emitted.push({ channel, data });
+    await Promise.all((listeners.get(channel) ?? []).map((l) => l(data)));
+  };
   const lifecycle = async (event: string): Promise<void> => {
     for (const h of handlers.get(event) ?? []) await h({ type: event }, ctx);
   };
-  return { pi: pi as unknown as ExtensionAPI, lifecycle, emitted, notices, ctx };
+  return { pi: pi as unknown as ExtensionAPI, lifecycle, publish, emitted, notices, ctx };
 }
