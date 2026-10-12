@@ -1,7 +1,7 @@
 {
   "name": "pi-chef-recipe-superpowers",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Optional pi-chef recipe: the chef and every cook work by the superpowers skills of Jesse Vincent.",
   "type": "module",
   "license": "MIT",

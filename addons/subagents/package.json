@@ -1,7 +1,7 @@
 {
   "name": "pi-chef-subagents",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Optional pi-chef add-on: shows the chef's cooks as external jobs in the pi-subagents FleetView.",
   "type": "module",
   "license": "MIT",
