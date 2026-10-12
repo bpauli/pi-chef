@@ -219,20 +219,24 @@ Emit rules, in `chef.ts`:
 
 Each consumer is the one writer of what it shows (a herdr tab status, a FleetView record). Chef never writes it.
 
-## herdr tabs
+## The viewer
 
-When the chef runs inside herdr (`HERDR_ENV=1` and `HERDR_WORKSPACE_ID` at activation), the owner session opens one herdr tab per cooking task, so the human can watch the cook work. The tab is a watch pane only. The cook stays a detached `pi --mode json -p` process, and the human still steers through the chef. A read-only session does nothing with tabs, so the tabs have one writer.
+`extension/watch.ts` is chef's reader of its own run files, for a human in a terminal. Every cooks snapshot names it per task as `viewer`: `node <extension>/watch.ts <task dir>`. The viewer prints the highest `runs/<n>.jsonl` from its start, then follows the appended bytes every 250 ms. It shows the prompt and steer messages, the streamed assistant text, one line per tool call with its key argument, a dim tail of the tool output, provider errors in red, the `chef_report` status and summary, and the run end. A newer run file gets a separator line with its run number. The viewer exits 0 when `log.jsonl` has a `closed` event. The viewer decides nothing. It runs under plain Node, so it imports node builtins only and narrows each line with small hand guards.
 
-The tab runs `exec node <extension>/watch.ts <task dir>` in the task worktree, with the label `cook <task id>` and `--no-focus`. The viewer (`watch.ts`) prints the highest `runs/<n>.jsonl` from its start, then follows the appended bytes every 250 ms. It shows the prompt and steer messages, the streamed assistant text, one line per tool call with its key argument, a dim tail of the tool output, provider errors in red, the `chef_report` status and summary, and the run end. A newer run file gets a separator line with its run number. The viewer exits 0 when `log.jsonl` has a `closed` event, and herdr then closes the tab. The viewer decides nothing. It runs under plain Node, so it imports node builtins only and narrows each line with small hand guards.
+## Add-on: herdr tabs
 
-`extension/herdr.ts` is the only module that calls herdr. `CookTabs` keeps one in-memory record per open task: the last run seen cooking, the pane of its tab, and the last state reported to that pane. Nothing is stored on disk. On each tick, after the kitchen tick, `CookTabs.sync` gets the board views:
+`addons/herdr/` is the package `pi-chef-herdr`. When the chef runs inside herdr (`HERDR_ENV=1` and `HERDR_WORKSPACE_ID` when the add-on loads), it opens one herdr tab per cooking task, so the human can watch the cook work. The tab is a watch pane only. The cook stays a detached `pi --mode json -p` process, and the human still steers through the chef. The add-on acts only on a snapshot with `role: "owner"`. A read-only or off snapshot makes it forget its records, so the tabs have one writer, and the next owner snapshot adopts the live tabs again. It sends `COOKS_REQUEST_EVENT` on `session_start`.
 
-- A run seen cooking for the first time is a transition. Only a transition, and the first sync after activation or promotion, lists the live tabs (`tab list` joined with `pane list`). A task with a live `cook <id>` tab adopts it. A transition with no live tab opens one. A chef restart adopts the tabs of the last chef.
+The tab runs `exec <viewer command> <viewer args...>`, each word shell-quoted, in the task worktree, with the label `cook <task id>` and `--no-focus`. When the viewer exits, herdr closes the tab. The add-on knows nothing of the kitchen layout.
+
+`addons/herdr/herdr.ts` is the only module that calls herdr. `CookTabs` keeps one in-memory record per open task: the last run seen cooking, the pane of its tab, and the last state reported to that pane. Nothing is stored on disk. Snapshots can arrive while herdr calls run, so one sync runs at a time, on the newest snapshot:
+
+- A run seen cooking for the first time is a transition. Only a transition, and the first owner snapshot after load or after a read-only or off snapshot, lists the live tabs (`tab list` joined with `pane list`). A task with a live `cook <id>` tab adopts it. A transition with no live tab opens one. A chef restart adopts the tabs of the last chef.
 - A tab is opened at most once per run. When the human closes a tab, the next report gets `pane_not_found`, the record forgets the pane, and no tab opens again for that run. The next run opens a new one.
 - A task with a known pane gets `pane report-agent --source chef --agent cook` when its report changes: cooking is `working` with the current activity, idle with done or stopped is `idle`, idle with needs decision, blocked, or failed is `blocked` with the outcome text. A queued task gets no report.
 - A run that starts and settles between two ticks is never seen cooking and gets no tab.
 
-Herdr calls are async (`execFile`) with the binary from `HERDR_BIN_PATH`, else `herdr`. Every reply is parsed with typebox. A herdr error never throws into the tick: it becomes an error line of the tick, shown by the same dedup as the kitchen errors.
+Herdr calls are async (`execFile`) with the binary from `HERDR_BIN_PATH`, else `herdr`. Every reply is parsed with typebox. A herdr error never throws into the event emitter: it becomes an error line, shown with `ctx.ui.notify` once while it lasts.
 
 ## Principles
 
@@ -266,12 +270,18 @@ About 3k lines of source. Any flow passes through at most three files: tool, the
 | `cooks.ts` | Launch argv, spawn, the liveness map, group signals, prompt text. |
 | `git.ts` | Worktree ensure and remove, landed facts, diffstat. |
 | `kitchen.ts` | The deep module: the seven operations plus `tick`. It imports no Pi types. |
-| `chef.ts` | The Pi shell: tools as one-call adapters, `/chef`, the widget, the `Waker`, the cook tabs, the cooks snapshot emission, activation. |
+| `chef.ts` | The Pi shell: tools as one-call adapters, `/chef`, the widget, the `Waker`, the cooks snapshot emission, activation. |
 | `cook.ts` | The cook half. |
 | `principles.ts` | Loads the vendored principles and builds the block for each role. |
 | `events.ts` | The integration contract: the cooks snapshot types, the event names, and the pure builder. No Pi types. |
-| `herdr.ts` | The only herdr caller: list, open, and report cook tabs, and the in-memory `CookTabs` record. |
-| `watch.ts` | The viewer a cook tab runs under plain Node. Node builtins only. |
+| `watch.ts` | The viewer of a task's run files, under plain Node. Node builtins only. |
+
+The add-ons live outside `extension/` and import no runtime code from it:
+
+| Module | Owns |
+|---|---|
+| `addons/herdr/index.ts` | The `pi-chef-herdr` entry: the snapshot listener, the sync queue, the notifications. |
+| `addons/herdr/herdr.ts` | The only herdr caller: list, open, and report cook tabs, and the in-memory `CookTabs` record. |
 
 Every file line and run-file line is checked with `Value.Check` before a field is read. A bad line is skipped and counted, never a crash of the tick. The tick reads the kitchen through one `Store.snapshot`, each file in isolation: a task whose `task.json` does not parse is listed on the board as `broken` with the reason, a bad `config.json` yields the defaults plus an error line, a bad project file is skipped plus an error line. The shell shows an error when it starts and again only after it went away and came back. `task.json` is written through tmp plus rename inside the task directory, whose `mkdir` is the exclusive step.
 
@@ -321,5 +331,5 @@ PR creation or merge automation (a brief can tell the cook to run `gh`), per-pro
 - Chef e2e (a chef `pi --mode rpc --chef` on the fake model): tools are active only with `--chef`; a dispatch leads to one `chef-wake` that starts a turn; a wake queued behind a busy turn is marked notified only on delivery; a wake dropped with `clear_queue` is sent again after the turn settles; the model gets the chef principles with `--chef` and after `/chef`, and none in a plain session or after `/chef off`. A kitchen e2e test proves the cook's model gets the cook principles and no chef rules.
 - Integration events: `cooksSnapshot` per state (cooking with activity and transcript, idle with each outcome, idle before a first run, queued, closed absent, the viewer arguments). Chef e2e with `test/cooks-recorder.ts` loaded by `-e`: a dispatch emits snapshots that go from no task to cooking to idle done, with no two equal snapshots in a row; a request gets the current snapshot again; `/chef off` emits role off, and nothing follows.
 - Viewer (a real `node extension/watch.ts` process on a temp task dir): it shows the tool line, the text, and the report while the run file grows, with a character split across two appends; a provider error; a newer run file switches with a separator; a `closed` event makes it exit 0.
-- herdr (`CookTabs` against `test/fake-herdr.mjs`, which logs its argv and keeps its tabs in a JSON file): a cooking task opens exactly one tab with the label, cwd, and viewer command, and the next sync calls herdr not at all; the command starts the viewer from a shell; an existing tab is adopted; each state change reports once with the mapped state; a closed tab is not reopened for the same run; a herdr failure is an error line. Chef e2e with the fake binary: inside herdr a dispatch opens one tab and reports `working`, then `idle` once; without `HERDR_ENV` no herdr call happens. `test/support.ts` deletes every `HERDR_*` variable, so no test reaches the human's live herdr session.
+- herdr add-on (`addons/herdr/test/`, `CookTabs` and the add-on entry driven by snapshots against `fake-herdr.mjs`, which logs its argv and keeps its tabs in a JSON file): a cooking task opens exactly one tab with the label, cwd, and viewer command, and the next snapshot calls herdr not at all; the command starts the viewer from a shell; an existing tab is adopted; each state change reports once with the mapped state; a closed tab is not reopened for the same run; a read-only or off snapshot calls herdr not at all and the next owner snapshot adopts again; a herdr failure is an error line, shown once; the entry asks for a snapshot at session start and skips another version; outside herdr it does nothing. Chef e2e with the add-on loaded by `-e` and the fake binary: inside herdr a dispatch opens one tab and reports `working`, then `idle` once; without `HERDR_ENV` no herdr call happens. `test/support.ts` deletes every `HERDR_*` variable, so no test reaches the human's live herdr session.
 - Sync (a fixture tree, no network): `tools/sync-pstack.mjs` vendors the principles, drops a removed one, and a second run changes nothing.

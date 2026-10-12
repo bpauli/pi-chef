@@ -47,7 +47,25 @@ The `/chef` command takes `on` (default), `off`, `takeover`, and `board`. One ch
 
 Each task has a worktree under the kitchen on branch `chef/<task id>`. Review the work there with `read` and `bash`, merge or push it as you like, then `chef_close` the task.
 
-When you run the chef inside herdr, the chef opens a tab named `cook <task id>` for each cook when it starts cooking. The tab shows what the cook does as it does it: its text, each tool call, a short tail of the tool output, errors, and its report. The herdr sidebar shows the state of each cook: working, blocked (it needs you), or idle. The tab is for watching only. Talk to the chef to steer a cook. When you close a tab, it stays closed until the next run of that task. `chef_close` closes the tab. Outside herdr, chef opens no tabs.
+To watch one cook live in a terminal, run the viewer on its task directory:
+
+```sh
+node <path to pi-chef>/extension/watch.ts <kitchen>/tasks/<task id>
+```
+
+## Integrations
+
+chef itself depends on no terminal multiplexer and no other Pi package. It publishes the open tasks as a cooks snapshot on Pi's in-process event bus (`pi-chef:cooks:v1`, see `docs/design.md`, "Integration events"). Optional add-on packages in `addons/` read it. Install only the ones you want:
+
+| Add-on | Does |
+|---|---|
+| `addons/herdr` | Inside herdr, opens a `cook <task id>` tab per cooking task that shows the cook live, and shows each cook's state in the herdr sidebar. See `addons/herdr/README.md`. |
+
+Pi git sources take no subdirectory, so install an add-on from a local path, for example from the checkout that `pi install git:github.com/bpauli/pi-chef` made:
+
+```sh
+pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/herdr
+```
 
 ## Configuration
 

@@ -1,14 +1,31 @@
 import { execFile } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { type Static, type TSchema, Type } from "typebox";
 import { Value } from "typebox/value";
-import { activityText, oneLine, outcomeDetail, outcomeText } from "./derive.ts";
-import { type PaneId, type RunNo, type TaskId, type TaskState, type TaskView, errorMessage } from "./domain.ts";
+import type { CooksSnapshot } from "../../extension/events.ts";
 
-export const WATCH_SCRIPT = fileURLToPath(new URL("./watch.ts", import.meta.url));
 const COOK_LABEL = /^cook (\S+)$/;
 const MESSAGE_MAX = 120;
 const CALL_TIMEOUT_MS = 10_000;
+
+declare const brand: unique symbol;
+export type PaneId = string & { readonly [brand]: "PaneId" };
+
+const OutcomeKind = Type.Union([Type.Literal("done"), Type.Literal("needs_decision"), Type.Literal("blocked"), Type.Literal("failed"), Type.Literal("stopped")]);
+const Task = Type.Object({
+  id: Type.String(),
+  state: Type.Union([Type.Literal("queued"), Type.Literal("cooking"), Type.Literal("idle")]),
+  run: Type.Optional(Type.Number()),
+  activity: Type.Optional(Type.String()),
+  outcome: Type.Optional(Type.Object({ kind: OutcomeKind, text: Type.String() })),
+  worktree: Type.String(),
+  viewer: Type.Object({ command: Type.String(), args: Type.Array(Type.String()) }),
+});
+/** The fields of a cooks snapshot that this add-on reads. */
+export const Snapshot = Type.Object({ version: Type.Literal(1), role: Type.Union([Type.Literal("owner"), Type.Literal("read-only"), Type.Literal("off")]), tasks: Type.Array(Task) });
+export type Snapshot = Static<typeof Snapshot>;
+export type CookTask = Static<typeof Task>;
+type Assignable<T extends U, U> = T;
+export type ContractFits = Assignable<CooksSnapshot, Snapshot>;
 
 const TabCreated = Type.Object({ result: Type.Object({ root_pane: Type.Object({ pane_id: Type.String() }) }) });
 const TabList = Type.Object({ result: Type.Object({ tabs: Type.Array(Type.Object({ tab_id: Type.String(), label: Type.String() })) }) });
@@ -29,12 +46,20 @@ export interface HerdrReport {
   message: string;
 }
 
-export function herdrReport(state: TaskState): HerdrReport | undefined {
-  if (state.kind === "cooking") return { state: "working", message: oneLine(activityText(state.activity), MESSAGE_MAX) };
-  if (state.kind !== "idle") return undefined;
-  const o = state.outcome;
-  if (o.kind === "done" || o.kind === "stopped") return { state: "idle", message: outcomeText(o) };
-  return { state: "blocked", message: oneLine(`${outcomeText(o)}: ${outcomeDetail(o)}`, MESSAGE_MAX) };
+const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+function oneLine(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
+export function herdrReport(task: CookTask): HerdrReport | undefined {
+  if (task.state === "cooking") return { state: "working", message: oneLine(task.activity ?? "cooking", MESSAGE_MAX) };
+  const o = task.outcome;
+  if (task.state !== "idle" || !o) return undefined;
+  if (o.kind === "done" || o.kind === "stopped") return { state: "idle", message: o.kind };
+  const label = o.kind === "needs_decision" ? "needs decision" : o.kind;
+  return { state: "blocked", message: oneLine(`${label}: ${o.text}`, MESSAGE_MAX) };
 }
 
 export const shellQuote = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`;
@@ -87,10 +112,11 @@ export class Herdr {
     return found;
   }
 
-  async openCookTab(task: TaskId, worktree: string, taskDir: string): Promise<PaneId> {
-    const created = await this.call(TabCreated, ["tab", "create", "--workspace", this.workspace, "--label", `cook ${task}`, "--cwd", worktree, "--no-focus"]);
+  async openCookTab(task: CookTask): Promise<PaneId> {
+    const created = await this.call(TabCreated, ["tab", "create", "--workspace", this.workspace, "--label", `cook ${task.id}`, "--cwd", task.worktree, "--no-focus"]);
     const pane = paneId(created.result.root_pane.pane_id);
-    await this.run(["pane", "run", pane, `exec node ${shellQuote(WATCH_SCRIPT)} ${shellQuote(taskDir)}`]);
+    const { command, args } = task.viewer;
+    await this.run(["pane", "run", pane, `exec ${[command, ...args].map(shellQuote).join(" ")}`]);
     return pane;
   }
 
@@ -111,23 +137,21 @@ function parseJson(text: string): unknown {
 
 interface CookTab {
   /** The last run seen cooking. A tab opens at most once per run. */
-  run: RunNo | undefined;
+  run: number | undefined;
   pane: PaneId | undefined;
   shown: string | undefined;
 }
 
 export class CookTabs {
-  private readonly tabs = new Map<TaskId, CookTab>();
+  private readonly tabs = new Map<string, CookTab>();
   private adopted = false;
   private readonly herdr: Herdr;
-  private readonly taskDir: (id: TaskId) => string;
 
-  constructor(herdr: Herdr, taskDir: (id: TaskId) => string) {
+  constructor(herdr: Herdr) {
     this.herdr = herdr;
-    this.taskDir = taskDir;
   }
 
-  private tab(id: TaskId): CookTab {
+  private tab(id: string): CookTab {
     let tab = this.tabs.get(id);
     if (!tab) this.tabs.set(id, (tab = { run: undefined, pane: undefined, shown: undefined }));
     return tab;
@@ -138,10 +162,18 @@ export class CookTabs {
     tab.pane = pane;
   }
 
-  async sync(views: readonly TaskView[]): Promise<string[]> {
-    const open = new Set(views.map((v) => v.spec.id));
+  /** Only the owner session writes to the tabs. Any other role forgets them, so the next owner snapshot adopts the live tabs again. */
+  async apply(snapshot: Snapshot): Promise<string[]> {
+    if (snapshot.role === "owner") return this.sync(snapshot.tasks);
+    this.tabs.clear();
+    this.adopted = false;
+    return [];
+  }
+
+  private async sync(tasks: readonly CookTask[]): Promise<string[]> {
+    const open = new Set(tasks.map((t) => t.id));
     for (const id of this.tabs.keys()) if (!open.has(id)) this.tabs.delete(id);
-    const fresh = views.flatMap((v) => (v.state.kind === "cooking" && this.tab(v.spec.id).run !== v.state.run ? [{ spec: v.spec, run: v.state.run }] : []));
+    const fresh = tasks.filter((t) => t.state === "cooking" && this.tab(t.id).run !== t.run);
     const errors: string[] = [];
     if (!this.adopted || fresh.length) {
       let live: Map<string, PaneId>;
@@ -151,21 +183,21 @@ export class CookTabs {
         return [`herdr: ${errorMessage(e)}`];
       }
       this.adopted = true;
-      for (const v of views) CookTabs.attach(this.tab(v.spec.id), live.get(v.spec.id));
-      for (const { spec, run } of fresh) {
-        const tab = this.tab(spec.id);
-        tab.run = run;
+      for (const t of tasks) CookTabs.attach(this.tab(t.id), live.get(t.id));
+      for (const t of fresh) {
+        const tab = this.tab(t.id);
+        tab.run = t.run;
         if (tab.pane) continue;
         try {
-          CookTabs.attach(tab, await this.herdr.openCookTab(spec.id, spec.worktree, this.taskDir(spec.id)));
+          CookTabs.attach(tab, await this.herdr.openCookTab(t));
         } catch (e) {
-          errors.push(`herdr: opening the tab of ${spec.id} failed: ${errorMessage(e)}`);
+          errors.push(`herdr: opening the tab of ${t.id} failed: ${errorMessage(e)}`);
         }
       }
     }
-    for (const v of views) {
-      const tab = this.tabs.get(v.spec.id);
-      const want = herdrReport(v.state);
+    for (const t of tasks) {
+      const tab = this.tabs.get(t.id);
+      const want = herdrReport(t);
       if (!tab?.pane || !want) continue;
       const key = `${want.state} ${want.message}`;
       if (key === tab.shown) continue;
@@ -174,7 +206,7 @@ export class CookTabs {
         tab.shown = key;
       } catch (e) {
         if (e instanceof HerdrError && e.code === "pane_not_found") tab.pane = undefined;
-        else errors.push(`herdr: reporting ${v.spec.id} failed: ${errorMessage(e)}`);
+        else errors.push(`herdr: reporting ${t.id} failed: ${errorMessage(e)}`);
       }
     }
     return errors;

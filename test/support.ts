@@ -12,7 +12,8 @@ export const CHEF_ENTRY = join(ROOT, "extension/index.ts");
 export const FAKE_PROVIDER = join(ROOT, "test/fake-model/provider.ts");
 export const SLOW_EXIT = join(ROOT, "test/slow-exit.ts");
 export const NEVER_EXIT = join(ROOT, "test/never-exit.ts");
-export const FAKE_HERDR = join(ROOT, "test/fake-herdr.mjs");
+export const FAKE_HERDR = join(ROOT, "addons/herdr/test/fake-herdr.mjs");
+export const HERDR_ADDON = join(ROOT, "addons/herdr/index.ts");
 export const COOKS_RECORDER = join(ROOT, "test/cooks-recorder.ts");
 export const FAKE_MODEL = "fake/scripted";
 

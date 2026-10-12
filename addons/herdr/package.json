@@ -1,0 +1,16 @@
+{
+  "name": "pi-chef-herdr",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Optional pi-chef add-on: opens a herdr tab for each cooking task and shows the cook's state in the herdr sidebar.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": ["pi-package", "pi-chef", "herdr"],
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}

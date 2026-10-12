@@ -8,7 +8,6 @@ import { COOKS_EVENT, COOKS_REQUEST_EVENT, type CooksSnapshot, cooksSnapshot, of
 import { type Board, ChefError, ChefModeEntrySchema, errorMessage, type Millis, type Notice, type NoticeRef, type Pid, type TaskId, type WakeDetails, WakeDetailsSchema, millis, parseTaskId, runNo } from "./domain.ts";
 import { type RestartNote, boardHeader, outcomeDetail, boardLines, formatAge, formatWake, outcomeText, plural, queuePosition, stateText, statusText } from "./derive.ts";
 import { piInvocation } from "./cooks.ts";
-import { CookTabs, Herdr } from "./herdr.ts";
 import { Kitchen, type KitchenReader, type TaskResult, lostError } from "./kitchen.ts";
 import { loadPrinciples, principlesBlock } from "./principles.ts";
 import { Store, kitchenDir } from "./store.ts";
@@ -127,7 +126,6 @@ interface ChefSession {
   reader: KitchenReader;
   owner: Kitchen | undefined;
   waker: Waker | undefined;
-  tabs: CookTabs | undefined;
   timer: ReturnType<typeof setInterval>;
   lastLines: string;
   restart: RestartNote | undefined;
@@ -164,11 +162,6 @@ export function installChef(pi: ExtensionAPI): void {
       current.restart = undefined;
     });
 
-  const tabsFor = (store: Store): CookTabs | undefined => {
-    const herdr = Herdr.fromEnv(process.env);
-    return herdr && new CookTabs(herdr, (id) => store.taskDir(id));
-  };
-
   let opening: Promise<ChefSession> | undefined;
   const open = (ctx: ExtensionContext, takeover = false): Promise<ChefSession> => {
     if (session && !takeover) return Promise.resolve(session);
@@ -192,7 +185,6 @@ export function installChef(pi: ExtensionAPI): void {
       reader: opened.kind === "owner" ? opened.kitchen : opened.reader,
       owner,
       waker: undefined,
-      tabs: undefined,
       timer: setInterval(() => void tick(ctx), TICK_MS),
       lastLines: "",
       restart: undefined,
@@ -203,10 +195,7 @@ export function installChef(pi: ExtensionAPI): void {
       snapshotKey: "",
     };
     current.timer.unref();
-    if (owner) {
-      current.waker = wakerFor(current);
-      current.tabs = tabsFor(store);
-    }
+    if (owner) current.waker = wakerFor(current);
     session = current;
     pi.setActiveTools(activeWithChef(true));
     if (!chefModeOn(ctx)) pi.appendEntry("chef-mode", { on: true });
@@ -240,14 +229,12 @@ export function installChef(pi: ExtensionAPI): void {
           s.owner = undefined;
           s.waker?.dispose();
           s.waker = undefined;
-          s.tabs = undefined;
           if (ctx.hasUI) ctx.ui.notify(lostError(report.holder).message, "warning");
           board = await s.reader.board();
         } else {
           if (s.firstTick && report.notices.length) s.restart = { cooking: report.board.cooks.busy, finished: report.notices.length };
           s.waker?.offer(report.notices);
-          const herdrErrors = s.tabs ? await s.tabs.sync(report.board.open) : [];
-          showErrors(s, ctx, [...report.errors, ...herdrErrors]);
+          showErrors(s, ctx, report.errors);
           board = report.board;
         }
       } else {
@@ -256,7 +243,6 @@ export function installChef(pi: ExtensionAPI): void {
           s.owner = promoted;
           s.reader = promoted;
           s.waker = wakerFor(s);
-          s.tabs = tabsFor(s.store);
           s.firstTick = true;
           if (ctx.hasUI) ctx.ui.notify("chef: this session now owns the kitchen.", "info");
         }

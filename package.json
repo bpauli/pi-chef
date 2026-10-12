@@ -15,7 +15,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test 'test/**/*.test.ts'",
+    "test": "node --test 'test/**/*.test.ts' 'addons/*/test/*.test.ts'",
     "check": "npm run typecheck && npm test"
   },
   "peerDependencies": {

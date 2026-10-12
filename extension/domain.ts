@@ -10,7 +10,6 @@ export type RunNo = Brand<number, "RunNo">;
 export type SessionId = Brand<string, "SessionId">;
 export type Pid = Brand<number, "Pid">;
 export type Millis = Brand<number, "Millis">;
-export type PaneId = Brand<string, "PaneId">;
 
 export const runNo = (n: number): RunNo => n as RunNo;
 export const millis = (n: number): Millis => n as Millis;

@@ -22,6 +22,7 @@ The e2e tests start real Pi processes on `test/fake-model/`, a scripted local mo
 - Never store task state. Derive it in `extension/derive.ts`.
 - Parse every external line (kitchen files, run files, tool parameters) with typebox at the boundary. Inside, trust the types.
 - `extension/kitchen.ts` imports no Pi types. Pi wiring lives in `extension/chef.ts` and `extension/cook.ts`.
+- Add-on code in `addons/` (not its tests) imports only types from `extension/` (`import type`). Each one parses the cooks snapshot with typebox.
 - All chef tool names start with `chef_`. pstack's Pi extension owns `agent`, `send_message`, `list_agents`, and `stop_agent`.
 - Name tests after the behavior they prove. A test must fail when that behavior breaks.
 - Comments only for a non-obvious why.
