@@ -1,16 +1,15 @@
 import { execFile, spawn } from "node:child_process";
-import { closeSync, existsSync, readFileSync, readdirSync } from "node:fs";
+import { closeSync, existsSync, readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import { basename } from "node:path";
 import { promisify } from "node:util";
 import { type Config, type Pid, type Profile, type Project, type RunNo, type TaskId, type TaskSpec, type Tried, isCode } from "./domain.ts";
 import type { LiveCooks } from "./derive.ts";
-import type { RunFds } from "./store.ts";
+import { type RunFds, taskOfRunFile } from "./store.ts";
 
 const run = promisify(execFile);
 
 export const ROLE_ENV = "CHEF_ROLE";
 export const TASK_DIR_ENV = "CHEF_TASK_DIR";
-export const SESSION_ENV = "CHEF_SESSION_ID";
 
 export interface PiInvocation {
   command: string;
@@ -50,9 +49,9 @@ export function launchCook(l: LaunchSpec, onEnd: (end: CookEnd) => void): Pid | 
   const child = spawn(l.pi.command, cookArgv(l), {
     cwd: l.spec.worktree,
     detached: true,
-    // An open stdin blocks `-p`.
+    // An open stdin blocks `-p`. The claimed run file on fd 1 is the cook's identity.
     stdio: ["ignore", l.fds.stdout, l.fds.stderr],
-    env: { ...process.env, [ROLE_ENV]: "cook", [TASK_DIR_ENV]: l.taskDir, [SESSION_ENV]: l.spec.sessionId },
+    env: { ...process.env, [ROLE_ENV]: "cook", [TASK_DIR_ENV]: l.taskDir },
   });
   child.on("error", (e) => onEnd({ kind: "error", message: `spawn of ${basename(l.pi.command)} failed: ${e.message}` }));
   child.on("exit", (code, signal) => onEnd({ kind: "exit", code, signal }));
@@ -71,30 +70,12 @@ export function alive(pid: number): boolean {
   }
 }
 
-// Pi 1.0.3 sets process.title at startup, which overwrites argv, so `--session-id`
-// is not readable from ps.
-const marker = (sessionId: string) => `${SESSION_ENV}=${sessionId}`;
-
-async function environOf(pid: number): Promise<string[]> {
-  if (process.platform === "linux") {
-    try {
-      return readFileSync(`/proc/${pid}/environ`, "utf8").split("\0");
-    } catch {
-      return [];
-    }
-  }
-  const { stdout } = await run("ps", ["-E", "-o", "command=", "-p", String(pid)]).catch(() => ({ stdout: "" }));
-  return stdout.trim().split(/\s+/);
-}
-
-export async function runsSession(pid: number, sessionId: string): Promise<boolean> {
-  return alive(pid) && (await environOf(pid)).includes(marker(sessionId));
-}
-
-interface Marked {
+/** One process and where its stdout points: the boundary type of the fd-1 primitive, parsed from /proc or lsof. */
+export interface Stdout {
   pid: Pid;
   ppid: number;
-  sessionId: string;
+  /** Resolved path. Linux readlink gives it resolved, lsof prints it resolved. */
+  path: string;
 }
 
 // proc(5) numbers the stat fields from 1. These index the fields after "(comm) ", which start at field 3.
@@ -106,48 +87,82 @@ function statFields(pid: number): string[] {
   return stat.slice(stat.lastIndexOf(")") + 2).split(" ");
 }
 
-async function scanMarked(): Promise<Marked[]> {
-  const found: Marked[] = [];
-  const take = (pid: number, ppid: number, env: readonly string[]) => {
-    const sessionId = env.find((e) => e.startsWith(`${SESSION_ENV}=`))?.slice(SESSION_ENV.length + 1);
-    if (sessionId && pid > 0) found.push({ pid: pid as Pid, ppid, sessionId });
-  };
+/** Pure. Parses `lsof -F pRn` output: `p<pid>`, `R<ppid>`, an optional `f1`, and `n<path>` per record. */
+export function parseLsof(text: string): Stdout[] {
+  const out: Stdout[] = [];
+  let pid: Pid | undefined;
+  let ppid = 0;
+  for (const line of text.split("\n")) {
+    const value = line.slice(1);
+    if (line.startsWith("p")) {
+      pid = Number(value) as Pid;
+      ppid = 0;
+    } else if (line.startsWith("R")) {
+      ppid = Number(value);
+    } else if (line.startsWith("n") && pid !== undefined) {
+      out.push({ pid, ppid, path: value });
+    }
+  }
+  return out;
+}
+
+const stdoutOf = (e: unknown): string => (typeof e === "object" && e !== null && "stdout" in e && typeof e.stdout === "string" ? e.stdout : "");
+
+/** The one platform split. `pids` undefined means every process. A process the probe cannot read is absent. */
+async function stdouts(pids?: readonly number[]): Promise<Stdout[]> {
   if (process.platform === "linux") {
-    for (const name of readdirSync("/proc")) {
-      const pid = Number(name);
-      if (!Number.isInteger(pid) || pid <= 0) continue;
+    const out: Stdout[] = [];
+    for (const pid of pids ?? readdirSync("/proc").map(Number).filter((n) => Number.isInteger(n) && n > 0)) {
       try {
-        take(pid, Number(statFields(pid)[STAT_PPID]), readFileSync(`/proc/${pid}/environ`, "utf8").split("\0"));
+        const path = readlinkSync(`/proc/${pid}/fd/1`);
+        out.push({ pid: pid as Pid, ppid: Number(statFields(pid)[STAT_PPID]), path });
       } catch {}
     }
-    return found;
+    return out;
   }
-  const { stdout } = await run("ps", ["-E", "-eo", "pid=,ppid=,command="], { maxBuffer: 64 * 1024 * 1024 }).catch(() => ({ stdout: "" }));
-  for (const line of stdout.split("\n")) {
-    const parts = line.trim().split(/\s+/);
-    take(Number(parts[0]), Number(parts[1]), parts.slice(2));
+  if (pids?.length === 0) return [];
+  const args = ["-w", "-d", "1", "-F", "pRn", ...(pids ? ["-a", "-p", pids.join(",")] : [])];
+  // lsof exits 1 when a listed pid is gone or has no fd 1, with the other records intact.
+  const { stdout } = await run("lsof", args, { maxBuffer: 64 * 1024 * 1024 }).catch((e: unknown) => ({ stdout: stdoutOf(e) }));
+  return parseLsof(stdout);
+}
+
+// Resolved on every call: the kitchen layout may not exist yet when the table is made, and
+// macOS reports a kitchen under /var as /private/var.
+function rootOf(tasksDir: string): string | undefined {
+  try {
+    return realpathSync(tasksDir);
+  } catch {
+    return undefined;
   }
-  return found;
 }
 
-/** One process and where its stdout points: the boundary type of the fd-1 primitive, parsed from /proc or lsof. */
-export interface Stdout {
-  pid: Pid;
-  ppid: number;
-  /** Resolved path. Linux readlink gives it resolved, lsof prints it resolved. */
-  path: string;
+/**
+ * Every live cook under `tasksDir`: the process whose fd 1 is `<tasksDir>/<id>/runs/<n>.jsonl` and whose
+ * parent does not write a run file. A missing tasks dir gives an empty map.
+ */
+export async function scanCooks(tasksDir: string): Promise<LiveCooks> {
+  const root = rootOf(tasksDir);
+  if (root === undefined) return new Map();
+  const cooks = (await stdouts()).flatMap((s) => {
+    const task = taskOfRunFile(root, s.path);
+    return task === undefined ? [] : [{ ...s, task }];
+  });
+  const writers = new Set<number>(cooks.map((c) => c.pid));
+  return new Map(cooks.filter((c) => !writers.has(c.ppid)).map((c) => [c.task, c.pid]));
 }
 
-/** Pure. Parses `lsof -F pRn` output: `p<pid>`, `R<ppid>`, an optional `f1`, and `n<path>` per record. */
-export function parseLsof(_text: string): Stdout[] {
-  throw new Error("not implemented");
-}
-
-export async function scanCooks(_tasksDir: string): Promise<Map<string, Pid>> {
-  const marked = await scanMarked();
-  const markedPids = new Set<number>(marked.map((m) => m.pid));
-  const parentUnmarked = (m: Marked): boolean => !markedPids.has(m.ppid);
-  return new Map(marked.filter(parentUnmarked).map((m) => [m.sessionId, m.pid]));
+/** The task each of `pids` cooks now, by its fd 1. A dead, reused, or foreign pid is absent. One probe for all. */
+async function tasksOf(tasksDir: string, pids: readonly Pid[]): Promise<Map<Pid, TaskId>> {
+  const root = rootOf(tasksDir);
+  const living = pids.filter(alive);
+  const out = new Map<Pid, TaskId>();
+  if (root === undefined || living.length === 0) return out;
+  for (const s of await stdouts(living)) {
+    const task = taskOfRunFile(root, s.path);
+    if (task !== undefined) out.set(s.pid, task);
+  }
+  return out;
 }
 
 export async function pidStart(pid: number): Promise<string | undefined> {
@@ -173,41 +188,34 @@ function signalGroup(pid: number, signal: NodeJS.Signals): void {
   }
 }
 
-// On SIGTERM Pi kills its own bash tree. SIGKILL gives it no chance, so a command
-// it was running may outlive it.
-export async function signalCook(pid: Pid, sessionId: string, signal: "SIGTERM" | "SIGKILL"): Promise<void> {
-  if (!(await runsSession(pid, sessionId))) return;
-  signalGroup(pid, signal);
-}
-
 export class CookTable {
-  private readonly pids = new Map<string, Pid>();
+  private readonly pids = new Map<TaskId, Pid>();
   private readonly tasksDir: string;
 
   constructor(tasksDir: string) {
     this.tasksDir = tasksDir;
   }
 
-  record(sessionId: string, pid: Pid): void {
-    this.pids.set(sessionId, pid);
+  record(task: TaskId, pid: Pid): void {
+    this.pids.set(task, pid);
   }
 
   async adopt(): Promise<void> {
-    for (const [sid, pid] of await scanCooks(this.tasksDir)) this.pids.set(sid, pid);
+    for (const [task, pid] of await scanCooks(this.tasksDir)) this.pids.set(task, pid);
   }
 
-  /** Group signal, after a check that `pid` still cooks `task`. A pid that does not is left alone. */
-  async signal(_task: TaskId, _pid: Pid, _signal: "SIGTERM" | "SIGKILL"): Promise<void> {
-    throw new Error("not implemented");
-  }
-
+  /** The known cooks whose fd 1 still is a run file of their task (pid reuse guard). The others leave the table. */
   async live(): Promise<LiveCooks> {
-    const out = new Map<string, Pid>();
-    for (const [sid, pid] of this.pids) {
-      if (await runsSession(pid, sid)) out.set(sid, pid);
-      else this.pids.delete(sid);
-    }
-    return out;
+    const found = await tasksOf(this.tasksDir, [...this.pids.values()]);
+    for (const [task, pid] of this.pids) if (found.get(pid) !== task) this.pids.delete(task);
+    return new Map(this.pids);
+  }
+
+  // On SIGTERM Pi kills its own bash tree. SIGKILL gives it no chance, so a command
+  // it was running may outlive it.
+  async signal(task: TaskId, pid: Pid, signal: "SIGTERM" | "SIGKILL"): Promise<void> {
+    if ((await tasksOf(this.tasksDir, [pid])).get(pid) !== task) return;
+    signalGroup(pid, signal);
   }
 }
 

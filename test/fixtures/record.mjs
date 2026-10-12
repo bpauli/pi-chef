@@ -32,7 +32,7 @@ for (const [name, script] of Object.entries(scripts)) {
   const args = [pi, "--mode", "json", "-p", "--no-session", "-ne", "-e", provider, "-e", entry, "--model", "fake/scripted", script];
   const child = spawn(process.execPath, args, {
     stdio: ["ignore", out, "inherit"],
-    env: { ...process.env, PI_CODING_AGENT_DIR: join(home, "agent"), FAKE_MODEL_PORT: fakePort, CHEF_ROLE: "cook", CHEF_TASK_DIR: taskDir, CHEF_SESSION_ID: spec.sessionId },
+    env: { ...process.env, PI_CODING_AGENT_DIR: join(home, "agent"), FAKE_MODEL_PORT: fakePort, CHEF_ROLE: "cook", CHEF_TASK_DIR: taskDir },
     cwd: home,
   });
   const code = await new Promise((ok) => child.on("exit", ok));

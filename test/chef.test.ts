@@ -7,7 +7,7 @@ import { after, afterEach, before, test } from "node:test";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { TICK_MS, WAKE_TIMING } from "../extension/chef.ts";
-import { scanCooks, signalCook } from "../extension/cooks.ts";
+import { CookTable, scanCooks } from "../extension/cooks.ts";
 import { PSTACK_PRINCIPLES_DIR, PSTACK_RULES } from "../addons/recipe-pstack/principles.ts";
 import { SUPERPOWERS_RULES } from "../addons/recipe-superpowers/superpowers.ts";
 import { Store } from "../extension/store.ts";
@@ -24,12 +24,8 @@ after(() => fake.stop());
 afterEach(async () => {
   for (const c of children.splice(0)) c.kill("SIGKILL");
   const store = new Store(tk.kitchenDir);
-  const cooks = await scanCooks(store.tasksDir());
-  for (const id of store.listTaskIds()) {
-    const sid = store.readSpec(id).sessionId;
-    const pid = cooks.get(sid);
-    if (pid) await signalCook(pid, sid, "SIGKILL");
-  }
+  const table = new CookTable(store.tasksDir());
+  for (const [task, pid] of await scanCooks(store.tasksDir())) await table.signal(task, pid, "SIGKILL");
   tk.dispose();
 });
 
@@ -340,8 +336,8 @@ async function chefBusyWhileCookFinishes(sleepSeconds: number) {
   const chef = startPi("rpc", ["--chef"]);
   chef.proc.stdin!.write(`${JSON.stringify({ id: "p1", type: "prompt", message: script })}\n`);
   const store = new Store(tk.kitchenDir);
-  const sessionId = await until("the task", () => store.listTaskIds().map((id) => store.readSpec(id).sessionId)[0]);
-  await until("the cook's exit", async () => ((await scanCooks(store.tasksDir())).has(sessionId) ? undefined : true));
+  const task = await until("the task", () => store.listTaskIds()[0]);
+  await until("the cook's exit", async () => ((await scanCooks(store.tasksDir())).has(task) ? undefined : true));
   return { chef, store };
 }
 

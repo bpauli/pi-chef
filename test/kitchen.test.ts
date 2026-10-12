@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, before, test } from "node:test";
 import { ChefError, type Notice, type Pid, type SessionId, type TaskId, millis, parseProjectName, runNo } from "../extension/domain.ts";
-import { alive, runsSession, scanCooks, signalCook } from "../extension/cooks.ts";
+import { CookTable, alive, scanCooks } from "../extension/cooks.ts";
 import { boardHeader } from "../extension/derive.ts";
 import { Kitchen, type KitchenDeps, KitchenReader, type Opened } from "../extension/kitchen.ts";
 import { PSTACK_PRINCIPLES_DIR, PSTACK_RULES } from "../addons/recipe-pstack/principles.ts";
 import { SUPERPOWERS_DIR, SUPERPOWERS_RULES } from "../addons/recipe-superpowers/superpowers.ts";
-import { RunTails, Store } from "../extension/store.ts";
+import { Store } from "../extension/store.ts";
 import { CHEF_ENTRY, COMMIT_STEP, FAKE_MODEL, FAKE_PROVIDER, NEVER_EXIT, PI_CLI, PSTACK_RECIPE_ADDON, REPORT_STEP, SUPERPOWERS_RECIPE_ADDON, ROLE_RECORDER, SLOW_EXIT, type TempKitchen, git, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
 
 let fake: Awaited<ReturnType<typeof startFakeModel>>;
@@ -24,11 +24,8 @@ afterEach(async () => {
 });
 
 async function reapCooks(store: Store): Promise<void> {
-  const cooks = await scanCooks(store.tasksDir());
-  for (const rec of store.snapshot(new RunTails(), new Set()).records) {
-    const pid = cooks.get(rec.spec.sessionId);
-    if (pid) await signalCook(pid, rec.spec.sessionId, "SIGKILL");
-  }
+  const table = new CookTable(store.tasksDir());
+  for (const [task, pid] of await scanCooks(store.tasksDir())) await table.signal(task, pid, "SIGKILL");
 }
 
 const self = (sessionId = "chef-test") => ({ pid: process.pid as Pid, sessionId });
@@ -166,12 +163,12 @@ test("send to a cook that reported and is still exiting waits for the exit and r
   const { view } = await kitchen.dispatch({ project: "api", title: "Fix login", brief });
   const n1 = await waitNotice(kitchen, view.spec.id);
   assert.equal(n1.outcome.kind, "needs_decision");
-  const oldPid = (await scanCooks(store.tasksDir())).get(view.spec.sessionId);
+  const oldPid = (await scanCooks(store.tasksDir())).get(view.spec.id);
   assert.ok(oldPid !== undefined, "the reported cook is still exiting when send is called");
 
   const delivery = await kitchen.send(view.spec.id, "use cookies");
   assert.deepEqual(delivery, { kind: "relaunched", run: 2 });
-  assert.equal(await runsSession(oldPid, view.spec.sessionId), false, "run 2 started only after the old cook exited");
+  assert.equal(alive(oldPid), false, "run 2 started only after the old cook exited");
   const n2 = await waitNotice(kitchen, view.spec.id);
   assert.deepEqual(n2.outcome, { kind: "done", summary: "used cookies", reported: true });
   assert.equal(n2.run, 2);
@@ -303,7 +300,7 @@ test("stop ends a running cook as stopped with no notice, and chef_send resumes 
     const v = await waitState(kitchen, view.spec.id, "cooking", 5000);
     return v.state.kind === "cooking" && v.state.activity.kind === "tool" ? v : undefined;
   });
-  const pid = (await scanCooks(store.tasksDir())).get(view.spec.sessionId);
+  const pid = (await scanCooks(store.tasksDir())).get(view.spec.id);
   assert.ok(pid);
   const stopped = (await kitchen.stop(view.spec.id)).view;
   const idle = stopped.state.kind === "idle" ? stopped : await waitState(kitchen, view.spec.id, "idle");
@@ -465,7 +462,7 @@ test("a cook that finished while no owner ran is reported by the next owner's fi
   const { view } = await first.dispatch({ project: "api", title: "Quick", brief: `${COMMIT_STEP("q.txt")}\n${REPORT_STEP("done", "quick")}` });
   first.release();
   await until("cook settles on its own", () => (readFileSync(store.runFile(view.spec.id, runNo(1)), "utf8").includes('"agent_settled"') ? true : undefined));
-  await until("cook process exit", async () => ((await scanCooks(store.tasksDir())).has(view.spec.sessionId) ? undefined : true));
+  await until("cook process exit", async () => ((await scanCooks(store.tasksDir())).has(view.spec.id) ? undefined : true));
 
   const second = await openOwner("chef-second");
   const first_tick = await second.tick();
@@ -534,7 +531,7 @@ test("a cook killed with SIGKILL derives failed with the stderr tail", async () 
     const v = await waitState(kitchen, view.spec.id, "cooking", 5000);
     return v.state.kind === "cooking" && v.state.activity.kind === "tool" ? v : undefined;
   });
-  const pid = (await scanCooks(store.tasksDir())).get(view.spec.sessionId)!;
+  const pid = (await scanCooks(store.tasksDir())).get(view.spec.id)!;
   writeFileSync(store.runErr(view.spec.id, runNo(1)), "fatal: out of memory\n", { flag: "a" });
   process.kill(-pid, "SIGKILL");
   const notice = await waitNotice(kitchen, view.spec.id);
@@ -545,7 +542,7 @@ test("a cook killed with SIGKILL derives failed with the stderr tail", async () 
 test("a cook that exits before its first output line is a failed launch with the stderr tail, not an endless relaunch, and a send retries it with the brief", async () => {
   const { kitchen, store } = await setup({ cookArgs: ["-e", FAKE_PROVIDER, "--model", "nope/none"] });
   const { view } = await kitchen.dispatch({ project: "api", title: "Add a", brief: `${COMMIT_STEP("a.txt")}\n${REPORT_STEP("done", "added a.txt")}` });
-  await until("cook exit", async () => ((await scanCooks(store.tasksDir())).has(view.spec.sessionId) ? undefined : true));
+  await until("cook exit", async () => ((await scanCooks(store.tasksDir())).has(view.spec.id) ? undefined : true));
   const report = await kitchen.tick();
   const state = report.kind === "ok" ? report.board.open[0]!.state : undefined;
   assert.deepEqual({ kind: state?.kind, outcome: state?.kind === "idle" ? state.outcome.kind : undefined }, { kind: "idle", outcome: "failed" });
@@ -628,7 +625,7 @@ test("a cook that never exits after its report is signalled and killed by the ti
   const { view } = await kitchen.dispatch({ project: "api", title: "Stuck", brief });
   const n1 = await waitNotice(kitchen, view.spec.id);
   assert.equal(n1.outcome.kind, "needs_decision");
-  const pid = (await scanCooks(store.tasksDir())).get(view.spec.sessionId);
+  const pid = (await scanCooks(store.tasksDir())).get(view.spec.id);
   assert.ok(pid !== undefined, "the reported cook is still alive");
   const deadline = Date.now() + 4000;
   while (Date.now() < deadline) {
@@ -641,7 +638,7 @@ test("a cook that never exits after its report is signalled and killed by the ti
   assert.deepEqual(n2.outcome, { kind: "done", summary: "used cookies", reported: true });
   await until("run 2 exit, forced by the tick as well", async () => {
     await kitchen.tick();
-    return (await scanCooks(store.tasksDir())).has(view.spec.sessionId) ? undefined : true;
+    return (await scanCooks(store.tasksDir())).has(view.spec.id) ? undefined : true;
   }, 10_000);
   assert.deepEqual(store.readEvents(view.spec.id).map((e) => e.type), ["notified", "notified"]);
 });
@@ -660,9 +657,11 @@ test("a launch rescans for a cook the owner does not know, so a liveness miss ne
   const first = await waitNotice(kitchen, id);
   assert.equal(first.outcome.kind, "failed", "no process anywhere: the run is dead");
 
-  const ghost = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore", env: { ...process.env, CHEF_SESSION_ID: sid } });
+  const out = openSync(store.runFile(id, runNo(1)), "a");
+  const ghost = spawn(process.execPath, ["-e", 'process.title = "pi"; setInterval(() => {}, 1000)'], { detached: true, stdio: ["ignore", out, "ignore"] });
   ghost.unref();
-  await until("ghost cook", async () => ((await scanCooks(store.tasksDir())).get(sid) === ghost.pid ? true : undefined));
+  closeSync(out);
+  await until("ghost cook", async () => ((await scanCooks(store.tasksDir())).get(id) === ghost.pid ? true : undefined));
   try {
     const delivery = await kitchen.send(id, "go on");
     assert.equal(existsSync(store.runFile(id, runNo(2))), false, "no second cook while one runs on the session");
