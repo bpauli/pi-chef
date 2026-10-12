@@ -2,7 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { closeSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename } from "node:path";
 import { promisify } from "node:util";
-import { type Config, type Pid, type Profile, type Project, type RunNo, type TaskSpec, type Tried, isCode } from "./domain.ts";
+import { type Config, type Pid, type Profile, type Project, type RunNo, type TaskId, type TaskSpec, type Tried, isCode } from "./domain.ts";
 import type { LiveCooks } from "./derive.ts";
 import type { RunFds } from "./store.ts";
 
@@ -130,7 +130,20 @@ async function scanMarked(): Promise<Marked[]> {
   return found;
 }
 
-export async function scanCooks(): Promise<Map<string, Pid>> {
+/** One process and where its stdout points: the boundary type of the fd-1 primitive, parsed from /proc or lsof. */
+export interface Stdout {
+  pid: Pid;
+  ppid: number;
+  /** Resolved path. Linux readlink gives it resolved, lsof prints it resolved. */
+  path: string;
+}
+
+/** Pure. Parses `lsof -F pRn` output: `p<pid>`, `R<ppid>`, an optional `f1`, and `n<path>` per record. */
+export function parseLsof(_text: string): Stdout[] {
+  throw new Error("not implemented");
+}
+
+export async function scanCooks(_tasksDir: string): Promise<Map<string, Pid>> {
   const marked = await scanMarked();
   const markedPids = new Set<number>(marked.map((m) => m.pid));
   const parentUnmarked = (m: Marked): boolean => !markedPids.has(m.ppid);
@@ -169,13 +182,23 @@ export async function signalCook(pid: Pid, sessionId: string, signal: "SIGTERM" 
 
 export class CookTable {
   private readonly pids = new Map<string, Pid>();
+  private readonly tasksDir: string;
+
+  constructor(tasksDir: string) {
+    this.tasksDir = tasksDir;
+  }
 
   record(sessionId: string, pid: Pid): void {
     this.pids.set(sessionId, pid);
   }
 
   async adopt(): Promise<void> {
-    for (const [sid, pid] of await scanCooks()) this.pids.set(sid, pid);
+    for (const [sid, pid] of await scanCooks(this.tasksDir)) this.pids.set(sid, pid);
+  }
+
+  /** Group signal, after a check that `pid` still cooks `task`. A pid that does not is left alone. */
+  async signal(_task: TaskId, _pid: Pid, _signal: "SIGTERM" | "SIGKILL"): Promise<void> {
+    throw new Error("not implemented");
   }
 
   async live(): Promise<LiveCooks> {

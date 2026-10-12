@@ -24,7 +24,7 @@ after(() => fake.stop());
 afterEach(async () => {
   for (const c of children.splice(0)) c.kill("SIGKILL");
   const store = new Store(tk.kitchenDir);
-  const cooks = await scanCooks();
+  const cooks = await scanCooks(store.tasksDir());
   for (const id of store.listTaskIds()) {
     const sid = store.readSpec(id).sessionId;
     const pid = cooks.get(sid);
@@ -341,7 +341,7 @@ async function chefBusyWhileCookFinishes(sleepSeconds: number) {
   chef.proc.stdin!.write(`${JSON.stringify({ id: "p1", type: "prompt", message: script })}\n`);
   const store = new Store(tk.kitchenDir);
   const sessionId = await until("the task", () => store.listTaskIds().map((id) => store.readSpec(id).sessionId)[0]);
-  await until("the cook's exit", async () => ((await scanCooks()).has(sessionId) ? undefined : true));
+  await until("the cook's exit", async () => ((await scanCooks(store.tasksDir())).has(sessionId) ? undefined : true));
   return { chef, store };
 }
 

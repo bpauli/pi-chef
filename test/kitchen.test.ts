@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 
 async function reapCooks(store: Store): Promise<void> {
-  const cooks = await scanCooks();
+  const cooks = await scanCooks(store.tasksDir());
   for (const rec of store.snapshot(new RunTails(), new Set()).records) {
     const pid = cooks.get(rec.spec.sessionId);
     if (pid) await signalCook(pid, rec.spec.sessionId, "SIGKILL");
@@ -166,7 +166,7 @@ test("send to a cook that reported and is still exiting waits for the exit and r
   const { view } = await kitchen.dispatch({ project: "api", title: "Fix login", brief });
   const n1 = await waitNotice(kitchen, view.spec.id);
   assert.equal(n1.outcome.kind, "needs_decision");
-  const oldPid = (await scanCooks()).get(view.spec.sessionId);
+  const oldPid = (await scanCooks(store.tasksDir())).get(view.spec.sessionId);
   assert.ok(oldPid !== undefined, "the reported cook is still exiting when send is called");
 
   const delivery = await kitchen.send(view.spec.id, "use cookies");
@@ -303,7 +303,7 @@ test("stop ends a running cook as stopped with no notice, and chef_send resumes 
     const v = await waitState(kitchen, view.spec.id, "cooking", 5000);
     return v.state.kind === "cooking" && v.state.activity.kind === "tool" ? v : undefined;
   });
-  const pid = (await scanCooks()).get(view.spec.sessionId);
+  const pid = (await scanCooks(store.tasksDir())).get(view.spec.sessionId);
   assert.ok(pid);
   const stopped = (await kitchen.stop(view.spec.id)).view;
   const idle = stopped.state.kind === "idle" ? stopped : await waitState(kitchen, view.spec.id, "idle");
@@ -465,7 +465,7 @@ test("a cook that finished while no owner ran is reported by the next owner's fi
   const { view } = await first.dispatch({ project: "api", title: "Quick", brief: `${COMMIT_STEP("q.txt")}\n${REPORT_STEP("done", "quick")}` });
   first.release();
   await until("cook settles on its own", () => (readFileSync(store.runFile(view.spec.id, runNo(1)), "utf8").includes('"agent_settled"') ? true : undefined));
-  await until("cook process exit", async () => ((await scanCooks()).has(view.spec.sessionId) ? undefined : true));
+  await until("cook process exit", async () => ((await scanCooks(store.tasksDir())).has(view.spec.sessionId) ? undefined : true));
 
   const second = await openOwner("chef-second");
   const first_tick = await second.tick();
@@ -534,7 +534,7 @@ test("a cook killed with SIGKILL derives failed with the stderr tail", async () 
     const v = await waitState(kitchen, view.spec.id, "cooking", 5000);
     return v.state.kind === "cooking" && v.state.activity.kind === "tool" ? v : undefined;
   });
-  const pid = (await scanCooks()).get(view.spec.sessionId)!;
+  const pid = (await scanCooks(store.tasksDir())).get(view.spec.sessionId)!;
   writeFileSync(store.runErr(view.spec.id, runNo(1)), "fatal: out of memory\n", { flag: "a" });
   process.kill(-pid, "SIGKILL");
   const notice = await waitNotice(kitchen, view.spec.id);
@@ -545,7 +545,7 @@ test("a cook killed with SIGKILL derives failed with the stderr tail", async () 
 test("a cook that exits before its first output line is a failed launch with the stderr tail, not an endless relaunch, and a send retries it with the brief", async () => {
   const { kitchen, store } = await setup({ cookArgs: ["-e", FAKE_PROVIDER, "--model", "nope/none"] });
   const { view } = await kitchen.dispatch({ project: "api", title: "Add a", brief: `${COMMIT_STEP("a.txt")}\n${REPORT_STEP("done", "added a.txt")}` });
-  await until("cook exit", async () => ((await scanCooks()).has(view.spec.sessionId) ? undefined : true));
+  await until("cook exit", async () => ((await scanCooks(store.tasksDir())).has(view.spec.sessionId) ? undefined : true));
   const report = await kitchen.tick();
   const state = report.kind === "ok" ? report.board.open[0]!.state : undefined;
   assert.deepEqual({ kind: state?.kind, outcome: state?.kind === "idle" ? state.outcome.kind : undefined }, { kind: "idle", outcome: "failed" });
@@ -628,7 +628,7 @@ test("a cook that never exits after its report is signalled and killed by the ti
   const { view } = await kitchen.dispatch({ project: "api", title: "Stuck", brief });
   const n1 = await waitNotice(kitchen, view.spec.id);
   assert.equal(n1.outcome.kind, "needs_decision");
-  const pid = (await scanCooks()).get(view.spec.sessionId);
+  const pid = (await scanCooks(store.tasksDir())).get(view.spec.sessionId);
   assert.ok(pid !== undefined, "the reported cook is still alive");
   const deadline = Date.now() + 4000;
   while (Date.now() < deadline) {
@@ -641,7 +641,7 @@ test("a cook that never exits after its report is signalled and killed by the ti
   assert.deepEqual(n2.outcome, { kind: "done", summary: "used cookies", reported: true });
   await until("run 2 exit, forced by the tick as well", async () => {
     await kitchen.tick();
-    return (await scanCooks()).has(view.spec.sessionId) ? undefined : true;
+    return (await scanCooks(store.tasksDir())).has(view.spec.sessionId) ? undefined : true;
   }, 10_000);
   assert.deepEqual(store.readEvents(view.spec.id).map((e) => e.type), ["notified", "notified"]);
 });
@@ -662,7 +662,7 @@ test("a launch rescans for a cook the owner does not know, so a liveness miss ne
 
   const ghost = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore", env: { ...process.env, CHEF_SESSION_ID: sid } });
   ghost.unref();
-  await until("ghost cook", async () => ((await scanCooks()).get(sid) === ghost.pid ? true : undefined));
+  await until("ghost cook", async () => ((await scanCooks(store.tasksDir())).get(sid) === ghost.pid ? true : undefined));
   try {
     const delivery = await kitchen.send(id, "go on");
     assert.equal(existsSync(store.runFile(id, runNo(2))), false, "no second cook while one runs on the session");

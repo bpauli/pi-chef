@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ChefError, type TaskId, type TaskSpec, millis, parseProjectName, runNo } from "../extension/domain.ts";
 import { EMPTY_RUN, deriveTask } from "../extension/derive.ts";
-import { type RunFds, RunTail, RunTails, Store } from "../extension/store.ts";
+import { type RunFds, RunTail, RunTails, Store, taskOfRunFile } from "../extension/store.ts";
 
 function withDir(run: (dir: string) => void): void {
   const dir = mkdtempSync(join(tmpdir(), "chef-store-"));
@@ -366,4 +366,26 @@ test("lease round-trips through tmp plus rename and an unreadable lease reads as
     store.removeLease();
     assert.equal(existsSync(store.lockFile()), false);
   });
+});
+
+test("tasksDir holds every task dir, and taskOfRunFile maps a resolved run-file path to its task and refuses every other path", () => {
+  const store = new Store("/k");
+  assert.equal(store.taskDir(id), join(store.tasksDir(), "api-1"));
+  const root = store.tasksDir();
+  assert.equal(taskOfRunFile(root, "/k/tasks/api-1/runs/3.jsonl"), "api-1");
+  assert.equal(taskOfRunFile(root, "/k/tasks/my-svc-12/runs/1.jsonl"), "my-svc-12");
+  for (const path of [
+    "/k/tasks/api-1/runs/3.prompt.md",
+    "/k/tasks/api-1/runs/3.err",
+    "/k/tasks/api-1/runs/3.jsonl (deleted)",
+    "/k/tasks/api-1/../api-2/runs/1.jsonl",
+    "/k/tasks/../other/api-1/runs/1.jsonl",
+    "/elsewhere/api-1/runs/1.jsonl",
+    "/k/tasks-2/api-1/runs/1.jsonl",
+    "/k/tasks/API-1/runs/1.jsonl",
+    "/k/tasks/api-1/inbox/1.jsonl",
+    "/k/tasks/api-1/runs/x/1.jsonl",
+    "/k/tasks",
+    "pipe:[12345]",
+  ]) assert.equal(taskOfRunFile(root, path), undefined, path);
 });

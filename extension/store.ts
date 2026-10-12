@@ -104,6 +104,15 @@ export function parseSpec(path: string, raw: string): TaskSpec {
   };
 }
 
+/**
+ * The task whose run file `<root>/<id>/runs/<n>.jsonl` is `path`, for `root` the resolved tasks dir.
+ * `path` comes from the OS (fd 1 of a process), so it is resolved and may end in " (deleted)".
+ * Any other path is undefined.
+ */
+export function taskOfRunFile(_root: string, _path: string): TaskId | undefined {
+  throw new Error("not implemented");
+}
+
 function writeAtomic(path: string, text: string): void {
   const tmp = `${path}.tmp-${randomBytes(4).toString("hex")}`;
   writeFileSync(tmp, text);
@@ -116,8 +125,12 @@ export class Store {
     this.dir = dir;
   }
 
+  /** `<kitchen>/tasks`. The directory the cook scan watches. */
+  tasksDir(): string {
+    return join(this.dir, "tasks");
+  }
   taskDir(id: TaskId): string {
-    return join(this.dir, "tasks", id);
+    return join(this.tasksDir(), id);
   }
   runPrompt(id: TaskId, n: RunNo): string {
     return join(this.taskDir(id), "runs", `${n}.prompt.md`);
