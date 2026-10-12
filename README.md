@@ -1,5 +1,7 @@
 # pi-chef
 
+[![Validate](https://github.com/bpauli/pi-chef/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/bpauli/pi-chef/actions/workflows/validate.yml)
+
 ```text
 chef  2/3 cooks  1 needs you
 ● api-7   cooking         anthropic/claude-sonnet-5-5  bash: make test  6m
