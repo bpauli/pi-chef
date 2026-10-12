@@ -15,13 +15,13 @@ The job also names the transcript path of the current or last run. FleetView job
 
 ## Install
 
-Install pi-chef and pi-subagents first. Then install this directory as a local package:
+Install pi-chef and pi-subagents first. Then install this add-on:
 
 ```sh
-pi install <path to pi-chef>/addons/subagents
+pi install npm:pi-chef-subagents
 ```
 
-Pi git sources take no subdirectory, so use the local path. When you installed pi-chef from git, the checkout is under your Pi agent directory, for example `~/.pi/agent/git/github.com/bpauli/pi-chef/addons/subagents`.
+To use the add-on from `main`, install its directory as a local package, because Pi git sources take no subdirectory. When you installed pi-chef from git, the checkout is under your Pi agent directory, for example `~/.pi/agent/git/github.com/bpauli/pi-chef/addons/subagents`.
 
 ## How it works
 

@@ -2,6 +2,16 @@
 
 Each release has one section `## <version>`. The release workflow uses the section text as the notes of the GitHub release. Write the section before you push the tag.
 
+## Unreleased
+
+### Added
+
+- pi-chef and its four add-ons are npm packages: `pi install npm:pi-chef`, and `pi install npm:pi-chef-herdr` for an add-on. The Release workflow publishes them through npm Trusted Publishing. The `pi-package` keyword lists them in the pi.dev package gallery.
+
+### Changed
+
+- The viewer is now `extension/watch.mjs` (it was `watch.ts`), so it runs from `node_modules` after an npm install. Run it as `node <path to pi-chef>/extension/watch.mjs <task dir>`.
+
 ## 0.1.1
 
 ### Fixed

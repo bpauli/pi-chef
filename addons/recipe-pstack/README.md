@@ -13,13 +13,13 @@ Each block also has an index of all 24 principles: the name, when the principle 
 
 ## Install
 
-Install pi-chef first. Then install this directory as a local package:
+Install pi-chef first. Then install this add-on:
 
 ```sh
-pi install <path to pi-chef>/addons/recipe-pstack
+pi install npm:pi-chef-recipe-pstack
 ```
 
-Pi git sources take no subdirectory, so use the local path. When you installed pi-chef from git, the checkout is under your Pi agent directory, for example `~/.pi/agent/git/github.com/bpauli/pi-chef/addons/recipe-pstack`.
+To use the add-on from `main`, install its directory as a local package, because Pi git sources take no subdirectory. When you installed pi-chef from git, the checkout is under your Pi agent directory, for example `~/.pi/agent/git/github.com/bpauli/pi-chef/addons/recipe-pstack`.
 
 Cooks load your installed Pi packages, so each cook also loads this add-on. To give the principles only to cooks of one kitchen, do not install the add-on. Put `"cookArgs": ["-e", "<path to pi-chef>/addons/recipe-pstack/index.ts"]` in the kitchen `config.json` instead.
 

@@ -22,8 +22,10 @@ chef  2/3 cooks  1 needs you
 ## Install
 
 ```sh
-pi install git:github.com/bpauli/pi-chef
+pi install npm:pi-chef
 ```
+
+To follow `main` instead of the npm releases, install from git: `pi install git:github.com/bpauli/pi-chef`.
 
 Requirements:
 
@@ -151,14 +153,16 @@ chef publishes the open tasks as a cooks snapshot on Pi's in-process event bus (
 | `addons/recipe-pstack` | A recipe. The chef and every cook work by the principles of [pstack](https://github.com/cursor/plugins/tree/main/pstack), the agent plugin by Lauren Tan. Each gets the always-on rules of its role and an index of the 24 vendored principle files in its system prompt. See [`addons/recipe-pstack/README.md`](addons/recipe-pstack/README.md). |
 | `addons/recipe-superpowers` | A recipe. The chef and every cook work by the skills of [superpowers](https://github.com/obra/superpowers) by Jesse Vincent. The chef gets the planning and orchestration skills, a cook the implementation skills, each with always-on rules and an index of the 10 vendored skill files. See [`addons/recipe-superpowers/README.md`](addons/recipe-superpowers/README.md). |
 
-Pi git sources take no subdirectory. Thus install an add-on from a local path, for example from the checkout that `pi install git:github.com/bpauli/pi-chef` made:
+Each add-on is its own npm package:
 
 ```sh
-pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/herdr
-pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/subagents
-pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/recipe-pstack
-pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/recipe-superpowers
+pi install npm:pi-chef-herdr
+pi install npm:pi-chef-subagents
+pi install npm:pi-chef-recipe-pstack
+pi install npm:pi-chef-recipe-superpowers
 ```
+
+Pi git sources take no subdirectory. Thus, to use an add-on from `main`, install it from a local path, for example from the checkout that `pi install git:github.com/bpauli/pi-chef` made: `pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/herdr`.
 
 ## Recipes
 
@@ -292,10 +296,10 @@ To release a version:
 
 1. Set the same `version` in `package.json` and in each `addons/*/package.json`, then run `npm install` to update `package-lock.json`.
 2. Add a section `## <version>` to `CHANGELOG.md`. Its text becomes the release notes.
-3. Run `node scripts/release-preflight.mjs v<version>`. It does the same checks as the release workflow.
+3. Run `node scripts/release-preflight.mjs v<version>` and `npm run pack:check`. They do the same checks as the release workflow.
 4. Commit, then tag and push: `git tag v<version> && git push origin main v<version>`.
 
-The `Release` workflow runs `Validate` on the tag, checks the tag against the versions and `CHANGELOG.md`, and creates the GitHub release. It does not publish to npm. Users install with `pi install git:github.com/bpauli/pi-chef`.
+The `Release` workflow runs `Validate` on the tag, checks the tag against the versions and `CHANGELOG.md`, publishes the five npm packages, and creates the GitHub release. It publishes through npm Trusted Publishing, so it needs no npm token. Each package on npmjs.com must name this repository and the workflow `release.yml` as its trusted publisher. A version that is already on npm from the same commit is skipped, so a rerun after a partial publish finishes the rest. The pi.dev gallery lists the packages because they have the `pi-package` keyword.
 
 ## License
 
