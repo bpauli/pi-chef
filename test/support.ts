@@ -3,12 +3,16 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+// A test run inside herdr would otherwise let every chef it starts open tabs in the human's live herdr session.
+for (const key of Object.keys(process.env)) if (key.startsWith("HERDR_")) delete process.env[key];
+
 export const ROOT = resolve(import.meta.dirname, "..");
 export const PI_CLI = join(ROOT, "node_modules/@earendil-works/pi-coding-agent/dist/cli.js");
 export const CHEF_ENTRY = join(ROOT, "extension/index.ts");
 export const FAKE_PROVIDER = join(ROOT, "test/fake-model/provider.ts");
 export const SLOW_EXIT = join(ROOT, "test/slow-exit.ts");
 export const NEVER_EXIT = join(ROOT, "test/never-exit.ts");
+export const FAKE_HERDR = join(ROOT, "test/fake-herdr.mjs");
 export const FAKE_MODEL = "fake/scripted";
 
 export async function startFakeModel(): Promise<{ port: string; stop(): void }> {
