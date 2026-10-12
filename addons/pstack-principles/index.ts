@@ -4,7 +4,7 @@ import { loadPrinciples, principlesBlock } from "./principles.ts";
 
 const ROLE_EVENT: typeof import("../../extension/events.ts").ROLE_EVENT = "pi-chef:role:v1";
 
-export default function chefPrinciples(pi: ExtensionAPI): void {
+export default function pstackPrinciples(pi: ExtensionAPI): void {
   const principles = loadPrinciples();
   const blocks = { chef: principlesBlock("chef", principles), cook: principlesBlock("cook", principles) };
 

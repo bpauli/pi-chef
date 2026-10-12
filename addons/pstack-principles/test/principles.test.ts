@@ -3,18 +3,18 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { PRINCIPLES_DIR, RULES, loadPrinciples, principlesBlock } from "../principles.ts";
+import { PSTACK_PRINCIPLES_DIR, PSTACK_RULES, loadPrinciples, principlesBlock } from "../principles.ts";
 
 const ROLES = ["chef", "cook"] as const;
 
 test("the principle index in each role's block lists every vendored principle with its description and a path that exists", () => {
-  const dirs = readdirSync(PRINCIPLES_DIR).filter((d) => d.startsWith("principle-")).sort();
+  const dirs = readdirSync(PSTACK_PRINCIPLES_DIR).filter((d) => d.startsWith("principle-")).sort();
   assert.ok(dirs.length > 0, "principles are vendored");
-  const principles = loadPrinciples(PRINCIPLES_DIR);
+  const principles = loadPrinciples(PSTACK_PRINCIPLES_DIR);
   for (const role of ROLES) {
     const lines = principlesBlock(role, principles).split("\n");
     for (const dir of dirs) {
-      const path = join(PRINCIPLES_DIR, dir, "SKILL.md");
+      const path = join(PSTACK_PRINCIPLES_DIR, dir, "SKILL.md");
       assert.ok(existsSync(path));
       const description = /^description: "(.*)"$/m.exec(readFileSync(path, "utf8"))?.[1];
       assert.ok(description, `${dir} has a quoted description`);
@@ -25,17 +25,22 @@ test("the principle index in each role's block lists every vendored principle wi
   }
 });
 
+test("each role's block starts with a heading that names the pstack set", () => {
+  const principles = loadPrinciples(PSTACK_PRINCIPLES_DIR);
+  for (const role of ROLES) assert.equal(principlesBlock(role, principles).split("\n")[0], "# Principles: pstack", role);
+});
+
 test("each role's block carries its own rules, none of the other role's, and every principle a rule cites is in the index", () => {
-  const principles = loadPrinciples(PRINCIPLES_DIR);
+  const principles = loadPrinciples(PSTACK_PRINCIPLES_DIR);
   const names = new Set(principles.map((p) => p.name));
   for (const role of ROLES) {
     const other = role === "chef" ? "cook" : "chef";
     const block = principlesBlock(role, principles);
-    for (const rule of RULES[role]) {
+    for (const rule of PSTACK_RULES[role]) {
       assert.ok(block.includes(rule.text), `${role} block has: ${rule.text}`);
       for (const cited of rule.principles) assert.ok(names.has(cited), `${cited} is vendored`);
     }
-    for (const rule of RULES[other]) assert.ok(!block.includes(rule.text), `${role} block lacks the ${other} rule: ${rule.text}`);
+    for (const rule of PSTACK_RULES[other]) assert.ok(!block.includes(rule.text), `${role} block lacks the ${other} rule: ${rule.text}`);
   }
 });
 

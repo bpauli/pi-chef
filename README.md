@@ -61,14 +61,16 @@ chef itself depends on no terminal multiplexer and no other Pi package. It publi
 |---|---|
 | `addons/herdr` | Inside herdr, opens a `cook <task id>` tab per cooking task that shows the cook live, and shows each cook's state in the herdr sidebar. See `addons/herdr/README.md`. |
 | `addons/subagents` | Shows each open task as a job in the FleetView of [pi-subagents](https://pi.dev/packages/pi-subagents): running, completed, failed, or stopped when it needs you or was stopped. See `addons/subagents/README.md`. |
-| `addons/principles` | The chef and every cook work by the principles of [pstack](https://github.com/cursor/plugins/tree/main/pstack), the agent plugin by Lauren Tan. Each gets the always-on rules of its role and an index of the 24 vendored principle files in its system prompt. See `addons/principles/README.md`. |
+| `addons/pstack-principles` | A principle set: the chef and every cook work by the principles of [pstack](https://github.com/cursor/plugins/tree/main/pstack), the agent plugin by Lauren Tan. Each gets the always-on rules of its role and an index of the 24 vendored principle files in its system prompt. See `addons/pstack-principles/README.md`. |
 
 Pi git sources take no subdirectory, so install an add-on from a local path, for example from the checkout that `pi install git:github.com/bpauli/pi-chef` made:
 
 ```sh
 pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/herdr
-pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/principles
+pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/pstack-principles
 ```
+
+A principle set is your choice of how the chef and the cooks work. chef has no principle set of its own and no default. pstack is the first set. Install one set. Another set can follow the same contract (see `docs/design.md`, "Principle sets").
 
 ## Configuration
 
@@ -137,4 +139,4 @@ The tests need no network and no credentials. The e2e tests start real Pi proces
 
 ## License
 
-MIT, see `LICENSE`. The vendored pstack principles in `addons/principles/principles/` keep their own MIT license, see `addons/principles/principles/LICENSE`.
+MIT, see `LICENSE`. The vendored pstack principles in `addons/pstack-principles/principles/` keep their own MIT license, see `addons/pstack-principles/principles/LICENSE`.

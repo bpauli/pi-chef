@@ -11,7 +11,7 @@ npm test             # node --test: unit, git, and offline e2e tests with the fa
 CHEF_TEST_PI=$(readlink -f $(which pi)) node --test test/chef.test.ts   # chef e2e on an installed Pi binary
 npm run check        # both
 pi -e ./extension/index.ts --chef   # try it in a real Pi session
-node addons/principles/sync-pstack.mjs <cursor/plugins checkout>   # update the vendored principles
+node addons/pstack-principles/sync-pstack.mjs <cursor/plugins checkout>   # update the vendored pstack principles
 ```
 
 The e2e tests start real Pi processes on `test/fake-model/`, a scripted local model. They need no network and no credentials.
@@ -30,7 +30,7 @@ The e2e tests start real Pi processes on `test/fake-model/`, a scripted local mo
 
 ## Principles
 
-This repo follows the [pstack](https://github.com/cursor/plugins/tree/main/pstack) principles. Each one below has a concrete rule here. Before you apply one, read its file in `addons/principles/principles/principle-<name>/SKILL.md`, for example `addons/principles/principles/principle-model-the-domain/SKILL.md`. These files are vendored for the optional principles add-on, and this repo's own development follows them too. Do not edit them. To update them, rerun `addons/principles/sync-pstack.mjs` (see `addons/principles/README.md`).
+This repo follows the [pstack](https://github.com/cursor/plugins/tree/main/pstack) principles. Each one below has a concrete rule here. Before you apply one, read its file in `addons/pstack-principles/principles/principle-<name>/SKILL.md`, for example `addons/pstack-principles/principles/principle-model-the-domain/SKILL.md`. These files are vendored for the optional pstack principles add-on, one principle set for chef users. This repo's own development follows them too. Do not edit them. To update them, rerun `addons/pstack-principles/sync-pstack.mjs` (see `addons/pstack-principles/README.md`).
 
 | Principle | Rule in this repo |
 |---|---|

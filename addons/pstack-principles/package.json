@@ -1,8 +1,8 @@
 {
-  "name": "pi-chef-principles",
+  "name": "pi-chef-pstack-principles",
   "private": true,
   "version": "0.1.0",
-  "description": "Optional pi-chef add-on: the chef and every cook work by the pstack principles.",
+  "description": "Optional pi-chef principle set: the chef and every cook work by the pstack principles.",
   "type": "module",
   "license": "MIT",
   "keywords": ["pi-package", "pi-chef", "pstack"],

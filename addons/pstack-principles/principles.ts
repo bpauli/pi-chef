@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 
-export const PRINCIPLES_DIR = fileURLToPath(new URL("./principles", import.meta.url));
+export const PSTACK_PRINCIPLES_DIR = fileURLToPath(new URL("./principles", import.meta.url));
 
 const FrontmatterSchema = Type.Object({ name: Type.String({ minLength: 1 }), description: Type.String({ minLength: 1 }) });
 
@@ -22,7 +22,7 @@ export interface Rule {
   principles: readonly string[];
 }
 
-export const RULES: Record<Role, readonly Rule[]> = {
+export const PSTACK_RULES: Record<Role, readonly Rule[]> = {
   cook: [
     { text: "Name the data shape before you write logic.", principles: ["principle-model-the-domain"] },
     { text: "For a bug, reproduce it first and fix the root cause. Do not add a guard that only hides the symptom.", principles: ["principle-fix-root-causes"] },
@@ -47,11 +47,11 @@ export const RULES: Record<Role, readonly Rule[]> = {
 };
 
 const FRAME: Record<Role, string> = {
-  cook: "You work by the pstack principles. The rules below are always on. The index after them lists each principle, when it applies, and the file that explains it.",
-  chef: "You run the kitchen by the pstack principles. The rules below are always on. The index after them lists each principle, when it applies, and the file that explains it.",
+  cook: "The user chose the pstack principles. You work by them. The rules below are always on. The index after them lists each principle, when it applies, and the file that explains it.",
+  chef: "The user chose the pstack principles. You run the kitchen by them. The rules below are always on. The index after them lists each principle, when it applies, and the file that explains it.",
 };
 
-export function loadPrinciples(dir: string = PRINCIPLES_DIR): Principle[] {
+export function loadPrinciples(dir: string = PSTACK_PRINCIPLES_DIR): Principle[] {
   const names = readdirSync(dir, { withFileTypes: true })
     .filter((e) => e.isDirectory() && e.name.startsWith("principle-"))
     .map((e) => e.name)
@@ -66,12 +66,12 @@ export function loadPrinciples(dir: string = PRINCIPLES_DIR): Principle[] {
 
 export function principlesBlock(role: Role, principles: readonly Principle[]): string {
   return [
-    "# Principles",
+    "# Principles: pstack",
     "",
     FRAME[role],
     "",
     "Rules:",
-    ...RULES[role].map((r) => `- ${r.text} (${r.principles.join(", ")})`),
+    ...PSTACK_RULES[role].map((r) => `- ${r.text} (${r.principles.join(", ")})`),
     "",
     "Index:",
     ...principles.map((p) => `- ${p.name}: ${p.description} File: ${p.path}`),

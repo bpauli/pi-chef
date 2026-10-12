@@ -53,7 +53,7 @@ test("sync-pstack vendors every upstream principle and the license, drops what u
     assert.equal(after["LICENSE"], "MIT fixture license\n");
     assert.match(after["SOURCE.md"]!, new RegExp(`Commit: ${sha}\n`));
     assert.match(after["SOURCE.md"]!, /https:\/\/github\.com\/cursor\/plugins\/tree\/main\/pstack/);
-    assert.match(after["SOURCE.md"]!, /Do not edit these files by hand; rerun addons\/principles\/sync-pstack\.mjs/);
+    assert.match(after["SOURCE.md"]!, /Do not edit these files by hand; rerun addons\/pstack-principles\/sync-pstack\.mjs/);
 
     const second = sync(checkout, out);
     assert.equal(second.status, 0, second.stderr);

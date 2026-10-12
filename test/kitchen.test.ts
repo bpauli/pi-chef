@@ -7,9 +7,9 @@ import { ChefError, type Notice, type Pid, type SessionId, type TaskId, millis, 
 import { alive, runsSession, scanCooks, signalCook } from "../extension/cooks.ts";
 import { boardHeader } from "../extension/derive.ts";
 import { Kitchen, type KitchenDeps, KitchenReader, type Opened } from "../extension/kitchen.ts";
-import { PRINCIPLES_DIR, RULES } from "../addons/principles/principles.ts";
+import { PSTACK_PRINCIPLES_DIR, PSTACK_RULES } from "../addons/pstack-principles/principles.ts";
 import { RunTails, Store } from "../extension/store.ts";
-import { CHEF_ENTRY, COMMIT_STEP, FAKE_MODEL, FAKE_PROVIDER, NEVER_EXIT, PI_CLI, PRINCIPLES_ADDON, REPORT_STEP, ROLE_RECORDER, SLOW_EXIT, type TempKitchen, git, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
+import { CHEF_ENTRY, COMMIT_STEP, FAKE_MODEL, FAKE_PROVIDER, NEVER_EXIT, PI_CLI, PSTACK_PRINCIPLES_ADDON, REPORT_STEP, ROLE_RECORDER, SLOW_EXIT, type TempKitchen, git, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
 
 let fake: Awaited<ReturnType<typeof startFakeModel>>;
 let tk: TempKitchen;
@@ -213,26 +213,28 @@ const assertCookContract = (prompt: string, title: string) => {
   assert.match(prompt, /End every run with exactly one chef_report call/);
 };
 
-test("the cook's model receives the cook contract, and without the principles add-on no principles", async () => {
+test("the cook's model receives the cook contract, and without a principle set add-on no principles", async () => {
   const { kitchen } = await setup();
   const { view } = await kitchen.dispatch({ project: "api", title: "Who am I", brief: "STEP echo-system:" });
   const notice = await waitNotice(kitchen, view.spec.id);
   assert.equal(notice.outcome.kind, "done");
   const prompt = notice.outcome.kind === "done" ? notice.outcome.summary : "";
   assertCookContract(prompt, "Who am I");
-  for (const rule of RULES.cook) assert.ok(!prompt.includes(rule.text), `no cook rule: ${rule.text}`);
-  assert.ok(!prompt.includes(PRINCIPLES_DIR), "no principle index");
+  for (const rule of PSTACK_RULES.cook) assert.ok(!prompt.includes(rule.text), `no cook rule: ${rule.text}`);
+  assert.ok(!prompt.includes(PSTACK_PRINCIPLES_DIR), "no principle index");
+  assert.ok(!prompt.includes("# Principles:"), "no principle set block");
 });
 
-test("with the principles add-on the cook's model receives the cook contract and the cook principles, with an index of the vendored files, and none of the chef rules", async () => {
-  const { kitchen } = await setup({ cookArgs: ["-e", FAKE_PROVIDER, "-e", PRINCIPLES_ADDON] });
+test("with the pstack principles add-on the cook's model receives the cook contract and the cook principles, with an index of the vendored files, and none of the chef rules", async () => {
+  const { kitchen } = await setup({ cookArgs: ["-e", FAKE_PROVIDER, "-e", PSTACK_PRINCIPLES_ADDON] });
   const { view } = await kitchen.dispatch({ project: "api", title: "Principles", brief: "STEP echo-system:" });
   const notice = await waitNotice(kitchen, view.spec.id);
   const prompt = notice.outcome.kind === "done" ? notice.outcome.summary : "";
   assertCookContract(prompt, "Principles");
-  for (const rule of RULES.cook) assert.ok(prompt.includes(rule.text), `cook rule present: ${rule.text}`);
-  for (const rule of RULES.chef) assert.ok(!prompt.includes(rule.text), `no chef rule: ${rule.text}`);
-  assert.ok(prompt.includes(join(PRINCIPLES_DIR, "principle-fix-root-causes", "SKILL.md")), "the index names the vendored files");
+  for (const rule of PSTACK_RULES.cook) assert.ok(prompt.includes(rule.text), `cook rule present: ${rule.text}`);
+  for (const rule of PSTACK_RULES.chef) assert.ok(!prompt.includes(rule.text), `no chef rule: ${rule.text}`);
+  assert.ok(prompt.includes(join(PSTACK_PRINCIPLES_DIR, "principle-fix-root-causes", "SKILL.md")), "the index names the vendored files");
+  assert.ok(prompt.includes("\n# Principles: pstack\n"), "the block heading names the pstack set");
 });
 
 test("a role request in a cook process gets cook", async () => {

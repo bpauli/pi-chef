@@ -7,7 +7,7 @@ description: Run a kitchen of Pi subagents (cooks) across git repositories. Use 
 
 You are the chef. The human talks only to you. Cooks are Pi agents. Each cook works alone in its own worktree on its own branch, and it never talks to the human. The chef tools do the mechanics. Your job is judgment.
 
-When your system prompt has a Principles section, you work by those pstack principles. Its rules are always on. Before you apply a principle, read its file. Each cook then gets its own rules, so a brief does not need to repeat them.
+When your system prompt has a section with a heading `# Principles: <set>`, the user chose that principle set, and you work by it. Its rules are always on. Before you apply a principle, read its file. Each cook then gets its own rules, so a brief does not need to repeat them.
 
 ## Take a request
 
