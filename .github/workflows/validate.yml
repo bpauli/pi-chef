@@ -38,3 +38,6 @@ jobs:
         run: npm run typecheck
       - name: Test
         run: npm test
+      - name: Check the npm packages
+        if: matrix.os == 'ubuntu-latest' && matrix.node == 24
+        run: npm run pack:check
