@@ -2,6 +2,12 @@
 
 Each release has one section `## <version>`. The release workflow uses the section text as the notes of the GitHub release. Write the section before you push the tag.
 
+## Unreleased
+
+### Fixed
+
+- Cooks are identified by their stdout run file instead of an environment marker, so chef finds its cooks on macOS, where Pi's process title hides the environment from `ps -E` (#2). macOS needs `lsof`, which ships with the system.
+
 ## 0.1.0
 
 The first release.
