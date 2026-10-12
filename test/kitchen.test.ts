@@ -385,7 +385,7 @@ test("a prompt file without a run file is relaunched from that prompt (interrupt
     worktree: store.worktreeDir(id),
     baseBranch: "main",
     sessionId: "0199c0de-1111-7000-8000-000000000001" as SessionId,
-    model: undefined,
+    models: [],
     createdAt: millis(Date.now()),
   });
   const prompt = `handwritten prompt\n${REPORT_STEP("done", "from the old prompt")}\n`;
@@ -412,7 +412,7 @@ test("a cook killed with SIGKILL derives failed with the stderr tail", async () 
 });
 
 test("a cook that exits before its first output line is a failed launch with the stderr tail, not an endless relaunch, and a send retries it with the brief", async () => {
-  const { kitchen, store } = await setup({ model: "nope/none" });
+  const { kitchen, store } = await setup({ cookArgs: ["-e", FAKE_PROVIDER, "--model", "nope/none"] });
   const view = await kitchen.dispatch({ project: "api", title: "Add a", brief: `${COMMIT_STEP("a.txt")}\n${REPORT_STEP("done", "added a.txt")}` });
   await until("cook exit", async () => ((await scanCooks()).has(view.spec.sessionId) ? undefined : true));
   const report = await kitchen.tick();
@@ -458,7 +458,7 @@ test("addProject refuses a base branch that does not exist or starts with a dash
   await assert.rejects(kitchen.dispatch({ project: "api", title: "x", brief: "y", model: "  " }), (e: unknown) => e instanceof ChefError && /model/.test(e.message));
   assert.deepEqual(store.listTaskIds(), []);
   const padded = await kitchen.dispatch({ project: "api", title: "m", brief: REPORT_STEP("done", "m"), model: ` ${FAKE_MODEL} ` });
-  assert.equal(store.readSpec(padded.spec.id).model, FAKE_MODEL);
+  assert.deepEqual(store.readSpec(padded.spec.id).models, [{ model: FAKE_MODEL }], "the explicit model leads, and the default list adds no duplicate");
   git(repos.api, "branch", "release");
   const p = await kitchen.addProject({ path: repos.api, name: "rel", baseBranch: "release" });
   assert.equal(p.baseBranch, "release");
@@ -519,7 +519,7 @@ test("a launch rescans for a cook the owner does not know, so a liveness miss ne
   const { kitchen, store } = await setup();
   const id = store.nextTaskId(parseProjectName("api"));
   const sid = `0199c0de-3333-7000-8000-${String(process.pid).padStart(12, "0")}` as SessionId;
-  store.createTask({ id, project: parseProjectName("api"), title: "Ghost", brief: "unused", branch: `chef/${id}`, worktree: store.worktreeDir(id), baseBranch: "main", sessionId: sid, model: undefined, createdAt: millis(Date.now()) });
+  store.createTask({ id, project: parseProjectName("api"), title: "Ghost", brief: "unused", branch: `chef/${id}`, worktree: store.worktreeDir(id), baseBranch: "main", sessionId: sid, models: [], createdAt: millis(Date.now()) });
   store.writePrompt(id, runNo(1), "STEP say: hi\n");
   const claim = store.claimRun(id, runNo(1));
   assert.ok(claim.kind === "claimed");

@@ -56,16 +56,32 @@ The cook role registers one tool, `chef_report {status, summary}`, with `status`
 
 The command `/chef` takes `on` (default), `off`, `takeover`, and `board`.
 
+## Cook models
+
+The human lists the cook models in `config.json`. The shape follows the crew dispatch config of firstmate, without its harness, quota, and approval fields, because a cook is always Pi:
+
+```ts
+type Profile = { model: string; thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" };
+type ModelRule = { name: string; when: string; use: Profile | Profile[]; why?: string };
+config.models?: { rules?: ModelRule[]; default?: Profile | Profile[] };
+```
+
+`model` is `provider/id`, as `pi --model` takes it. `thinking` is a `pi --thinking` level. A rule `name` matches `[a-z0-9][a-z0-9-]*` and is unique. `when` says in plain words which tasks the rule fits. A single profile in `use` or `default` is a list of one. `loadConfig` normalizes the file to `{ rules: { name, when, use: Profile[], why }[]; default: Profile[] }`.
+
+The old top-level `model` and `thinking` still load, as `models.default: [{ model, thinking }]`. A file with `models` and one of the old fields, or with `thinking` and no `model`, is a config error line, and the kitchen uses the defaults.
+
+A dispatch freezes the task's candidates in `task.json` as `models: Profile[]`, in order, without two entries for one model: an explicit `model` first, then the default list. Run 1 uses the first candidate: `--model <model>`, plus `--thinking <level>` when the profile has one. An empty list means that the task has no frozen candidates: each launch uses the kitchen default of that moment, and with no default the cook gets no `--model`, so Pi picks its own default. A `task.json` written before candidates existed loads its `model` as `models: [{ model }]`, and one without a model as `[]`. Thus a task that relied on the config `model` keeps it.
+
 ## Files and writers
 
 One writer per file. No file is shared by two writers.
 
 | File under the kitchen | Writer | Meaning |
 |---|---|---|
-| `config.json` | the human | Optional. `maxCooks` (default 3), `model`, `thinking`, `cookArgs` (extra pi args for every cook). |
+| `config.json` | the human | Optional. `maxCooks` (default 3), `models` (see "Cook models"), `cookArgs` (extra pi args for every cook). |
 | `pass.lock` | the lease holder | `{pid, pidStart, sessionId, since}`. |
 | `projects/<name>.json` | owner, once | Project spec. |
-| `tasks/<id>/task.json` | owner, once (O_EXCL) | Immutable task spec: project, title, brief, branch, worktree, base branch, session id, model. |
+| `tasks/<id>/task.json` | owner, once (O_EXCL) | Immutable task spec: project, title, brief, branch, worktree, base branch, session id, the candidate models, and the model rule. |
 | `tasks/<id>/log.jsonl` | owner, append | Decisions only: `stop`, `hold`, `notified`, `launch_failed`, `closed`. |
 | `tasks/<id>/runs/<n>.prompt.md` | owner | Launch intent for run `n`: brief or messages. |
 | `tasks/<id>/runs/<n>.jsonl` | the cook's Pi stdout | Everything the cook did. The owner only creates it empty with O_EXCL. That create is the launch claim. |
@@ -133,7 +149,7 @@ Each step is safe if a crash stops it halfway.
 2. Write `runs/<n>.prompt.md`. The brief plus the pending inbox messages until a run has delivered the brief, then only the messages. An interrupted launch reuses its prompt and appends new messages.
 3. Move those messages to `inbox/handled/`.
 4. Create `runs/<n>.jsonl` with O_EXCL (the claim) and open `runs/<n>.err` for append. A failed claim means another launch won. Stop.
-5. Spawn `pi --mode json -p --session-id <uuid> --session-dir <task>/session -e <chef entry> [--model] [--thinking] [cookArgs...] @<prompt file>`, detached in its own process group, stdin `ignore`, stdout to the claimed file, stderr to `runs/<n>.err`, env `CHEF_ROLE=cook`, `CHEF_TASK_DIR=<task dir>`, `CHEF_SESSION_ID=<uuid>`.
+5. Spawn `pi --mode json -p --session-id <uuid> --session-dir <task>/session -e <chef entry> [--model <candidate>] [--thinking <level>] [cookArgs...] @<prompt file>`, detached in its own process group, stdin `ignore`, stdout to the claimed file, stderr to `runs/<n>.err`, env `CHEF_ROLE=cook`, `CHEF_TASK_DIR=<task dir>`, `CHEF_SESSION_ID=<uuid>`.
 
 The child runs the same Pi as the chef: `process.execPath` plus `process.argv[1]` when Pi runs under Node, `process.execPath` alone for the compiled binary. It never resolves `pi` from `PATH`.
 
@@ -386,7 +402,7 @@ PR creation or merge automation (a brief can tell the cook to run `gh`), per-pro
 
 ## Test plan
 
-- Unit (`node --test`, no Pi): run-file fold over recorded Pi streams, `deriveTask` per state (including launch failures and the same-millisecond stop), `plan` (cap, interrupted launch and the reclaim threshold, stop escalation, the stuck settled cook, closed with worktree), close verdict, wake batching with the in-flight set, board text, result text truncation, the LF-only reader with split UTF-8 input, the cook poller gate against a fake extension API.
+- Unit (`node --test`, no Pi): run-file fold over recorded Pi streams, `deriveTask` per state (including launch failures and the same-millisecond stop), `plan` (cap, interrupted launch and the reclaim threshold, stop escalation, the stuck settled cook, closed with worktree), close verdict, wake batching with the in-flight set, board text, result text truncation, the LF-only reader with split UTF-8 input, the cook poller gate against a fake extension API, the config models (rules, a single profile as a list of one, the old `model` and `thinking` shorthand, and duplicate rule names, a bad thinking level, and old and new fields together as error lines), and a `task.json` from before candidates.
 - Git (real temp repos): ensure worktree twice, landed by base and by remote branch, dirty refusal, a stale remote-tracking ref never deletes the branch, a detached HEAD is off the branch.
 - Kitchen e2e (real cook Pi processes, fake model, temp `PI_CODING_AGENT_DIR` and `CHEF_HOME`): dispatch to two projects; a cook reports `needs_decision`; `send` relaunches and the cook commits and reports `done`; a message sent mid-run is steered; stop, and send right after a stop; close refuses then succeeds; a new `Kitchen` instance adopts a live cook and derives the outcome of a cook that exited while no owner ran; a second tick does nothing; a bad model and a broken worktree path are launch failures that a send retries; a broken task.json and config.json do not stop the tick; a cook that never exits is killed; a ghost cook blocks a second launch; a lost lease is found before any write; a read-only session promotes.
 - Chef e2e (a chef `pi --mode rpc --chef` on the fake model): tools are active only with `--chef`; a dispatch leads to one `chef-wake` that starts a turn; a wake queued behind a busy turn is marked notified only on delivery; a wake dropped with `clear_queue` is sent again after the turn settles.

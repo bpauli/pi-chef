@@ -26,7 +26,7 @@ const spec = (store: Store, over: Partial<TaskSpec> = {}): TaskSpec => ({
   worktree: store.worktreeDir(id),
   baseBranch: "main",
   sessionId: "sid" as TaskSpec["sessionId"],
-  model: undefined,
+  models: [],
   createdAt: millis(1),
   ...over,
 });
@@ -138,16 +138,85 @@ test("moveToHandled tolerates a message the cook already moved", () => {
   });
 });
 
+const NO_MODELS = { rules: [], default: [] };
+
 test("loadConfig: a missing file gives defaults, a wrong type gives defaults plus an error that names the field", () => {
   withDir((dir) => {
     const store = new Store(dir);
-    assert.deepEqual(store.loadConfig().config, { maxCooks: 3, model: undefined, thinking: undefined, cookArgs: [] });
+    assert.deepEqual(store.loadConfig().config, { maxCooks: 3, models: NO_MODELS, cookArgs: [] });
     writeFileSync(join(dir, "config.json"), JSON.stringify({ maxCooks: "three" }));
     const bad = store.loadConfig();
-    assert.deepEqual(bad.config, { maxCooks: 3, model: undefined, thinking: undefined, cookArgs: [] });
+    assert.deepEqual(bad.config, { maxCooks: 3, models: NO_MODELS, cookArgs: [] });
     assert.match(bad.error ?? "", /config\.json is invalid at \/maxCooks/);
     writeFileSync(join(dir, "config.json"), JSON.stringify({ maxCooks: 1, cookArgs: ["-e", "x.ts"] }));
-    assert.deepEqual(store.loadConfig().config, { maxCooks: 1, model: undefined, thinking: undefined, cookArgs: ["-e", "x.ts"] });
+    assert.deepEqual(store.loadConfig().config, { maxCooks: 1, models: NO_MODELS, cookArgs: ["-e", "x.ts"] });
+  });
+});
+
+function configFrom(dir: string, file: unknown): ReturnType<Store["loadConfig"]> {
+  writeFileSync(join(dir, "config.json"), JSON.stringify(file));
+  return new Store(dir).loadConfig();
+}
+
+test("loadConfig reads model rules and the default list, and a single profile in use or default is a list of one", () => {
+  withDir((dir) => {
+    const { config, error } = configFrom(dir, {
+      models: {
+        rules: [
+          { name: "deep", when: "architecture or a hard bug", use: [{ model: "anthropic/opus", thinking: "high" }, { model: "openai/gpt" }], why: "needs judgment" },
+          { name: "docs", when: "docs only", use: { model: "openai/mini" } },
+        ],
+        default: { model: "openai/gpt", thinking: "medium" },
+      },
+    });
+    assert.equal(error, undefined);
+    assert.deepEqual(config.models, {
+      rules: [
+        { name: "deep", when: "architecture or a hard bug", use: [{ model: "anthropic/opus", thinking: "high" }, { model: "openai/gpt" }], why: "needs judgment" },
+        { name: "docs", when: "docs only", use: [{ model: "openai/mini" }], why: undefined },
+      ],
+      default: [{ model: "openai/gpt", thinking: "medium" }],
+    });
+  });
+});
+
+test("loadConfig reads the old top-level model and thinking as the default list", () => {
+  withDir((dir) => {
+    assert.deepEqual(configFrom(dir, { model: "openai/gpt-6-astra" }).config.models, { rules: [], default: [{ model: "openai/gpt-6-astra" }] });
+    assert.deepEqual(configFrom(dir, { model: "a/b", thinking: "low" }).config.models, { rules: [], default: [{ model: "a/b", thinking: "low" }] });
+  });
+});
+
+test("loadConfig refuses duplicate rule names, a bad thinking level, a bad rule name, and old and new model fields together, each as an error line with the defaults", () => {
+  withDir((dir) => {
+    const rule = (name: string) => ({ name, when: "w", use: { model: "a/b" } });
+    const cases: [unknown, RegExp][] = [
+      [{ models: { rules: [rule("deep"), rule("deep")] } }, /two model rules named "deep"/],
+      [{ models: { default: { model: "a/b", thinking: "hard" } } }, /invalid at \/models\/default/],
+      [{ model: "a/b", thinking: "hard" }, /invalid at \/thinking/],
+      [{ models: { rules: [rule("Deep Work")] } }, /invalid at \/models\/rules\/0\/name/],
+      [{ models: { default: { model: "  " } } }, /invalid at \/models\/default/],
+      [{ model: "a/b", models: { default: { model: "c/d" } } }, /both models and the old model/],
+      [{ thinking: "low" }, /thinking without model/],
+    ];
+    for (const [file, why] of cases) {
+      const { config, error } = configFrom(dir, file);
+      assert.match(error ?? "", why, JSON.stringify(file));
+      assert.deepEqual(config.models, NO_MODELS);
+    }
+  });
+});
+
+test("a task.json written before model lists loads its model as a list of one, and one with no model as an empty list", () => {
+  withDir((dir) => {
+    const store = new Store(dir);
+    store.createTask(spec(store));
+    const path = join(store.taskDir(id), "task.json");
+    const { models: _, ...old } = JSON.parse(readFileSync(path, "utf8"));
+    writeFileSync(path, JSON.stringify({ ...old, model: "openai/gpt-6-astra" }));
+    assert.deepEqual(store.readSpec(id).models, [{ model: "openai/gpt-6-astra" }]);
+    writeFileSync(path, JSON.stringify(old));
+    assert.deepEqual(store.readSpec(id).models, []);
   });
 });
 

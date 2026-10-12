@@ -46,7 +46,7 @@ function spec(over: Partial<TaskSpec> = {}): TaskSpec {
     worktree: "/k/worktrees/api-1",
     baseBranch: "main",
     sessionId: "sid-1" as TaskSpec["sessionId"],
-    model: undefined,
+    models: [],
     createdAt: millis(1000),
     ...over,
   };

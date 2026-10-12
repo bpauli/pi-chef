@@ -76,6 +76,15 @@ export const ProjectSchema = Type.Object(
 export type ProjectFile = Static<typeof ProjectSchema>;
 export type Project = Omit<ProjectFile, "name" | "addedAt"> & { name: ProjectName; addedAt: Millis };
 
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+const ThinkingSchema = StringEnum(THINKING_LEVELS, { description: "pi --thinking level" });
+
+export const ProfileSchema = Type.Object(
+  { model: Type.String({ pattern: "\\S", description: "provider/model" }), thinking: Type.Optional(ThinkingSchema) },
+  { additionalProperties: false },
+);
+export type Profile = Static<typeof ProfileSchema>;
+
 export const TaskSpecSchema = Type.Object(
   {
     id: Type.String(),
@@ -86,16 +95,20 @@ export const TaskSpecSchema = Type.Object(
     worktree: Type.String({ description: "kitchen/worktrees/<id>" }),
     baseBranch: Type.String(),
     sessionId: Type.String(),
-    model: Type.Optional(Type.String()),
+    models: Type.Optional(Type.Array(ProfileSchema, { description: "candidate models, in order, frozen at dispatch" })),
+    rule: Type.Optional(Type.String({ description: "the model rule chosen at dispatch" })),
+    model: Type.Optional(Type.String({ description: "written before models existed, read as models: [{ model }]" })),
     createdAt: Type.Number(),
   },
   { additionalProperties: false },
 );
 export type TaskSpecFile = Static<typeof TaskSpecSchema>;
-export type TaskSpec = Omit<TaskSpecFile, "id" | "project" | "sessionId" | "createdAt"> & {
+export type TaskSpec = Omit<TaskSpecFile, "id" | "project" | "sessionId" | "createdAt" | "models" | "model"> & {
   id: TaskId;
   project: ProjectName;
   sessionId: SessionId;
+  /** Empty: no frozen list, so each launch uses the kitchen default of that moment. */
+  models: Profile[];
   createdAt: Millis;
 };
 
@@ -108,22 +121,73 @@ export const TaskEventSchema = Type.Union([
 ]);
 export type TaskEvent = Static<typeof TaskEventSchema>;
 
+const ProfilesSchema = Type.Union([ProfileSchema, Type.Array(ProfileSchema, { minItems: 1 })]);
+const RULE_NAME = /^[a-z0-9][a-z0-9-]*$/;
+
+export const ModelRuleSchema = Type.Object(
+  {
+    name: Type.String({ pattern: RULE_NAME.source, description: "what chef_dispatch passes as rule" }),
+    when: Type.String({ description: "the kind of task, in plain words" }),
+    use: ProfilesSchema,
+    why: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+
 export const ConfigSchema = Type.Object(
   {
     maxCooks: Type.Optional(Type.Integer({ minimum: 1 })),
-    model: Type.Optional(Type.String({ description: "cook model, provider/id" })),
-    thinking: Type.Optional(Type.String()),
+    model: Type.Optional(Type.String({ description: "shorthand for models.default: [{ model, thinking }]" })),
+    thinking: Type.Optional(ThinkingSchema),
+    models: Type.Optional(
+      Type.Object({ rules: Type.Optional(Type.Array(ModelRuleSchema)), default: Type.Optional(ProfilesSchema) }, { additionalProperties: false }),
+    ),
     cookArgs: Type.Optional(Type.Array(Type.String(), { description: "extra pi args for every cook" })),
   },
   { additionalProperties: false },
 );
+export type ConfigFile = Static<typeof ConfigSchema>;
+
+export interface ModelRule {
+  name: string;
+  when: string;
+  use: Profile[];
+  why: string | undefined;
+}
+export interface ModelsConfig {
+  rules: ModelRule[];
+  default: Profile[];
+}
 export interface Config {
   maxCooks: number;
-  model: string | undefined;
-  thinking: string | undefined;
+  models: ModelsConfig;
   cookArgs: string[];
 }
-export const DEFAULT_CONFIG: Config = { maxCooks: 3, model: undefined, thinking: undefined, cookArgs: [] };
+export const DEFAULT_CONFIG: Config = { maxCooks: 3, models: { rules: [], default: [] }, cookArgs: [] };
+
+const listOf = (p: Profile | Profile[]): Profile[] => (Array.isArray(p) ? p : [p]);
+
+/** Normalizes a parsed config file. The old top-level `model` and `thinking` become the default list. */
+export function configOf(file: ConfigFile, path: string): Config {
+  if (file.models !== undefined && (file.model !== undefined || file.thinking !== undefined)) {
+    throw new ChefError(`${path} has both models and the old model or thinking field. Move them into models.default.`);
+  }
+  if (file.thinking !== undefined && file.model === undefined) throw new ChefError(`${path} has thinking without model. Set both, or use models.default.`);
+  const names = new Set<string>();
+  for (const rule of file.models?.rules ?? []) {
+    if (names.has(rule.name)) throw new ChefError(`${path} has two model rules named "${rule.name}". Rule names must be unique.`);
+    names.add(rule.name);
+  }
+  const shorthand: Profile[] = file.model === undefined ? [] : [file.thinking === undefined ? { model: file.model } : { model: file.model, thinking: file.thinking }];
+  return {
+    maxCooks: file.maxCooks ?? DEFAULT_CONFIG.maxCooks,
+    models: {
+      rules: (file.models?.rules ?? []).map((r) => ({ name: r.name, when: r.when, use: listOf(r.use), why: r.why })),
+      default: file.models?.default === undefined ? shorthand : listOf(file.models.default),
+    },
+    cookArgs: file.cookArgs ?? [],
+  };
+}
 
 export const LeaseSchema = Type.Object(
   { pid: Type.Number(), pidStart: Type.String(), sessionId: Type.String(), since: Type.Number() },

@@ -77,13 +77,16 @@ The kitchen lives in `<pi agent dir>/chef` (usually `~/.pi/agent/chef`). Set `CH
 ```json
 {
   "maxCooks": 3,
-  "model": "anthropic/claude-sonnet-5-5",
-  "thinking": "medium",
+  "models": {
+    "default": [{ "model": "anthropic/claude-sonnet-5-5", "thinking": "medium" }, { "model": "openai/gpt-6-astra" }]
+  },
   "cookArgs": ["--no-skills"]
 }
 ```
 
-Every field is optional. `maxCooks` caps the cooks that run at once (default 3). `model` and `thinking` apply to every cook; `chef_dispatch` can set a model per task. `cookArgs` are extra `pi` arguments for every cook.
+Every field is optional. `maxCooks` caps the cooks that run at once (default 3). `models.default` is the list of cook models, in order of preference. Each entry is a `provider/id` model and an optional `thinking` level. `chef_dispatch` can set a model per task, which goes before the default list. `cookArgs` are extra `pi` arguments for every cook.
+
+The older form `{ "model": "openai/gpt-6-astra", "thinking": "medium" }` still works. It is the same as a default list of one.
 
 The kitchen is plain files. `tasks/<id>/task.json` is the task, `runs/<n>.jsonl` is the cook's full Pi stream for run `n`, `log.jsonl` holds the chef's decisions, and `inbox/` holds messages to the cook. No task state is stored; chef derives it from these files and the live processes on every tick. See `docs/design.md` for the contract and `CONTEXT.md` for the words.
 

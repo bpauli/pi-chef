@@ -232,7 +232,9 @@ export class Kitchen extends KitchenReader {
   dispatch(input: DispatchInput): Promise<TaskView> {
     return this.mutate(async (viewAfterTick) => {
       const project = this.requireProject(input.project);
-      const model = input.model === undefined ? undefined : parseModel(input.model);
+      const { config } = this.store.loadConfig();
+      const explicit = input.model === undefined ? [] : [{ model: parseModel(input.model) }];
+      const models = [...explicit, ...config.models.default].filter((p, i, all) => all.findIndex((q) => q.model === p.model) === i);
       let id: TaskId | undefined;
       for (let attempt = 0; attempt < 5 && !id; attempt++) {
         const candidate = this.store.nextTaskId(project.name);
@@ -245,7 +247,7 @@ export class Kitchen extends KitchenReader {
           worktree: this.store.worktreeDir(candidate),
           baseBranch: project.baseBranch,
           sessionId: randomUUID() as SessionId,
-          model,
+          models,
           createdAt: this.now(),
         });
         if (created.kind === "created") id = candidate;
@@ -390,6 +392,7 @@ export class Kitchen extends KitchenReader {
     if (action.reclaim) this.store.releaseEmptyClaim(spec.id, action.run);
     const claim = this.store.claimRun(spec.id, action.run);
     if (claim.kind === "taken") return;
+    const { config } = this.store.loadConfig();
     const pid = launchCook(
       {
         pi: this.deps.pi,
@@ -399,7 +402,8 @@ export class Kitchen extends KitchenReader {
         promptFile: this.store.runPrompt(spec.id, action.run),
         sessionDir: this.store.sessionDir(spec.id),
         taskDir: this.store.taskDir(spec.id),
-        config: this.store.loadConfig().config,
+        profile: spec.models[0] ?? config.models.default[0],
+        config,
         fds: claim.fds,
       },
       (end) => this.failLaunchIfNoOutput(spec.id, action.run, end),

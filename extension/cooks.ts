@@ -2,7 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { closeSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename } from "node:path";
 import { promisify } from "node:util";
-import { type Config, type Pid, type Project, type RunNo, type TaskSpec, isCode } from "./domain.ts";
+import { type Config, type Pid, type Profile, type Project, type RunNo, type TaskSpec, isCode } from "./domain.ts";
 import type { LiveCooks } from "./derive.ts";
 import type { RunFds } from "./store.ts";
 
@@ -31,15 +31,15 @@ export interface LaunchSpec {
   promptFile: string;
   sessionDir: string;
   taskDir: string;
+  profile: Profile | undefined;
   config: Config;
   fds: RunFds;
 }
 
 export function cookArgv(l: LaunchSpec): string[] {
   const args = [...l.pi.args, "--mode", "json", "-p", "--session-id", l.spec.sessionId, "--session-dir", l.sessionDir, "-e", l.chefEntry];
-  const model = l.spec.model ?? l.config.model;
-  if (model) args.push("--model", model);
-  if (l.config.thinking) args.push("--thinking", l.config.thinking);
+  if (l.profile) args.push("--model", l.profile.model);
+  if (l.profile?.thinking) args.push("--thinking", l.profile.thinking);
   args.push(...l.config.cookArgs, `@${l.promptFile}`);
   return args;
 }

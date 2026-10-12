@@ -16,7 +16,7 @@ const spec: TaskSpec = {
   worktree: "/k/worktrees/api-1",
   baseBranch: "main",
   sessionId: "0199-sid" as TaskSpec["sessionId"],
-  model: undefined,
+  models: [],
   createdAt: millis(1),
 };
 
@@ -42,15 +42,19 @@ test("cookArgv runs the same pi in json print mode on the task session with the 
     promptFile: "/k/tasks/api-1/runs/2.prompt.md",
     sessionDir: "/k/tasks/api-1/session",
     taskDir: "/k/tasks/api-1",
-    config: { maxCooks: 3, model: "fake/scripted", thinking: "low", cookArgs: ["-e", "/x.ts"] },
+    profile: { model: "fake/scripted", thinking: "low" },
+    config: { maxCooks: 3, models: { rules: [], default: [] }, cookArgs: ["-e", "/x.ts"] },
     fds: { stdout: 0, stderr: 0 },
   });
   assert.deepEqual(argv, [
     "/pi/cli.js", "--mode", "json", "-p", "--session-id", "0199-sid", "--session-dir", "/k/tasks/api-1/session",
     "-e", "/chef/extension/index.ts", "--model", "fake/scripted", "--thinking", "low", "-e", "/x.ts", "@/k/tasks/api-1/runs/2.prompt.md",
   ]);
-  const own = cookArgv({ ...{ pi: { command: "/bin/pi", args: [] }, chefEntry: "/c", spec: { ...spec, model: "other/model" }, run: runNo(1), promptFile: "/p", sessionDir: "/s", taskDir: "/t", config: { maxCooks: 3, model: "fake/scripted", thinking: undefined, cookArgs: [] }, fds: { stdout: 0, stderr: 0 } } });
-  assert.deepEqual(own.slice(own.indexOf("--model"), own.indexOf("--model") + 2), ["--model", "other/model"]);
+  const bare = { pi: { command: "/bin/pi", args: [] }, chefEntry: "/c", spec, run: runNo(1), promptFile: "/p", sessionDir: "/s", taskDir: "/t", config: { maxCooks: 3, models: { rules: [], default: [] }, cookArgs: [] }, fds: { stdout: 0, stderr: 0 } };
+  const noThinking = cookArgv({ ...bare, profile: { model: "other/model" } });
+  assert.deepEqual(noThinking.slice(noThinking.indexOf("--model")), ["--model", "other/model", "@/p"]);
+  const piDefault = cookArgv({ ...bare, profile: undefined });
+  assert.ok(!piDefault.includes("--model") && !piDefault.includes("--thinking"), "no profile leaves the model to Pi");
 });
 
 test("launchCook reports a missing binary through onEnd instead of crashing the process, and closes the claim fds", async () => {
@@ -58,7 +62,7 @@ test("launchCook reports a missing binary through onEnd instead of crashing the 
   const fds = { stdout: openSync(join(dir, "1.jsonl"), "w"), stderr: openSync(join(dir, "1.err"), "w") };
   const ends: CookEnd[] = [];
   const pid = launchCook(
-    { pi: { command: join(dir, "no-such-pi"), args: [] }, chefEntry: "/c", spec: { ...spec, worktree: dir }, run: runNo(1), promptFile: "/p", sessionDir: dir, taskDir: dir, config: { maxCooks: 3, model: undefined, thinking: undefined, cookArgs: [] }, fds },
+    { pi: { command: join(dir, "no-such-pi"), args: [] }, chefEntry: "/c", spec: { ...spec, worktree: dir }, run: runNo(1), promptFile: "/p", sessionDir: dir, taskDir: dir, profile: undefined, config: { maxCooks: 3, models: { rules: [], default: [] }, cookArgs: [] }, fds },
     (end) => ends.push(end),
   );
   assert.equal(pid, undefined);

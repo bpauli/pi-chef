@@ -13,7 +13,7 @@ const spec: TaskSpec = {
   worktree: "/k/worktrees/api-1",
   baseBranch: "main",
   sessionId: "sid" as TaskSpec["sessionId"],
-  model: undefined,
+  models: [],
   createdAt: millis(1),
 };
 

@@ -19,6 +19,7 @@ function view(id: string, state: TaskState): TaskView {
     worktree: `/k/worktrees/${id}`,
     baseBranch: "main",
     sessionId: `sid-${id}` as SessionId,
+    models: [],
     createdAt: millis(1),
   };
   return { spec, state };

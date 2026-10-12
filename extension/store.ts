@@ -24,6 +24,7 @@ import {
   type Config,
   ConfigSchema,
   DEFAULT_CONFIG,
+  configOf,
   type Lease,
   LeaseSchema,
   type Millis,
@@ -85,8 +86,15 @@ export function parseFile<T extends TSchema>(schema: T, path: string, raw: strin
 }
 
 export function parseSpec(path: string, raw: string): TaskSpec {
-  const file = parseFile(TaskSpecSchema, path, raw);
-  return { ...file, id: file.id as TaskId, project: file.project as ProjectName, sessionId: file.sessionId as TaskSpec["sessionId"], createdAt: millis(file.createdAt) };
+  const { model, models, ...file } = parseFile(TaskSpecSchema, path, raw);
+  return {
+    ...file,
+    id: file.id as TaskId,
+    project: file.project as ProjectName,
+    sessionId: file.sessionId as TaskSpec["sessionId"],
+    models: models ?? (model === undefined ? [] : [{ model }]),
+    createdAt: millis(file.createdAt),
+  };
 }
 
 function writeAtomic(path: string, text: string): void {
@@ -137,11 +145,7 @@ export class Store {
     const path = join(this.dir, "config.json");
     if (!existsSync(path)) return { config: DEFAULT_CONFIG, error: undefined };
     try {
-      const file = parseFile(ConfigSchema, path, readFileSync(path, "utf8"));
-      return {
-        config: { maxCooks: file.maxCooks ?? DEFAULT_CONFIG.maxCooks, model: file.model, thinking: file.thinking, cookArgs: file.cookArgs ?? [] },
-        error: undefined,
-      };
+      return { config: configOf(parseFile(ConfigSchema, path, readFileSync(path, "utf8")), path), error: undefined };
     } catch (e) {
       return { config: DEFAULT_CONFIG, error: errorMessage(e) };
     }
