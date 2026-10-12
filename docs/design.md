@@ -177,6 +177,8 @@ The child runs the same Pi as the chef: `process.execPath` plus `process.argv[1]
 
 Ticks and mutations (`addProject`, `dispatch`, `send`, `stop`, `close`, `markNotified`) run on one serialized chain. A mutation runs in the order lease check, read, decide, write, then the tick body. A lost lease is found before the first write, and no interval tick can change a task between the decision and the write. `send` holds the chain while it waits for a reported cook to exit.
 
+Every read checks liveness first and reads the task files after it. A cook writes its last lines before it exits, so a cook that exits between the two reads leaves complete files, and the tick sees it as settled. The reverse order judges stale files against a dead process and derives "cook exited before settling" for a cook that reported. A scan for an unknown run reads the files again after the scan. `send` reads liveness before each tick: when the cook was live before the tick and the task is still queued after it, the cook is exiting and `send` waits, else the task is queued behind the cap.
+
 A stop request on a live run escalates to SIGKILL after the grace period. A `closed` event with a worktree still on disk finishes the removal.
 
 ### Close and branch deletion

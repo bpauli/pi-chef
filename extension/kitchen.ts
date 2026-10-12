@@ -125,15 +125,13 @@ export class KitchenReader {
   }
 
   async board(): Promise<Board> {
-    const snap = this.snapshot();
-    const live = await this.liveCooks(snap.records);
+    const { data: snap, live } = await this.observe(() => this.snapshot(), (s) => s.records);
     const { views } = plan(this.planInput(snap.records, live, snap.config.maxCooks));
     return this.boardOf(views, snap, leaseIsMine(this.store, this.deps.self) ? "owner" : "read-only", this.holder());
   }
 
   async result(task: TaskId): Promise<TaskResult> {
-    const rec = this.store.loadRecord(task, this.tails);
-    const live = await this.liveCooks([rec]);
+    const { data: rec, live } = await this.observeTask(task);
     const view = deriveTask(rec, live, this.now());
     const project = this.store.readProject(rec.spec.project);
     const git = project ? await gitFacts(project.path, rec.spec.worktree, rec.spec.branch, rec.spec.baseBranch) : undefined;
@@ -153,8 +151,26 @@ export class KitchenReader {
     return this.store.snapshot(this.tails, this.fullyClosed);
   }
 
-  protected async liveCooks(records: readonly TaskRecord[]): Promise<LiveCooks> {
-    let live = await this.cooks.live();
+  /**
+   * Liveness first, then the files it judges. A cook that exits between the two reads has written
+   * its last lines before the read, so its files are complete. A scan for an unknown run reads the
+   * files again after it, for the same reason.
+   */
+  protected async observe<T>(read: () => T, recordsOf: (data: T) => readonly TaskRecord[]): Promise<{ data: T; live: LiveCooks }> {
+    const live = await this.cooks.live();
+    const data = read();
+    if (!this.unknownRuns(recordsOf(data), live)) return { data, live };
+    await this.cooks.adopt();
+    const after = await this.cooks.live();
+    return { data: read(), live: after };
+  }
+
+  protected observeTask(task: TaskId): Promise<{ data: TaskRecord; live: LiveCooks }> {
+    return this.observe(() => this.store.loadRecord(task, this.tails), (rec) => [rec]);
+  }
+
+  /** True when a claimed, unsettled run has no known cook and has not had its one scan yet. */
+  private unknownRuns(records: readonly TaskRecord[], live: LiveCooks): boolean {
     const candidates = new Set<string>();
     const unknown = records.filter((rec) => {
       const last = rec.runs.at(-1);
@@ -166,11 +182,7 @@ export class KitchenReader {
       return true;
     });
     for (const key of this.scannedUnknownRuns) if (!candidates.has(key)) this.scannedUnknownRuns.delete(key);
-    if (unknown.length) {
-      await this.cooks.adopt();
-      live = await this.cooks.live();
-    }
-    return live;
+    return unknown.length > 0;
   }
 
   protected planInput(records: readonly TaskRecord[], live: LiveCooks, cap: number): PlanInput {
@@ -278,6 +290,8 @@ export class Kitchen extends KitchenReader {
       this.store.postMessage(task, text, this.now());
       const deadline = this.now() + (this.deps.exitWaitMs ?? DEFAULT_TIMING.exitWaitMs);
       for (;;) {
+        // Read before the tick: a cook that exits after the tick judged it is relaunched by the next tick, not queued.
+        const exiting = (await this.cooks.live()).has(task);
         const report = await this.runTick();
         if (report.kind === "lost") throw lostError(report.holder);
         const state = report.board.open.find((v) => v.spec.id === task)?.state;
@@ -289,7 +303,7 @@ export class Kitchen extends KitchenReader {
         }
         if (state?.kind === "idle" && state.outcome.kind === "failed") return { kind: "launch-failed", reason: state.outcome.reason };
         if (state?.kind !== "queued") throw new ChefError(`${task} did not take the message: it is ${state ? stateText(state) : "gone"}.`);
-        if (!(await this.cooks.live()).has(rec.spec.id)) return { kind: "queued", position: queuePosition(report.board, task) };
+        if (!exiting) return { kind: "queued", position: queuePosition(report.board, task) };
         if (this.now() >= deadline) return { kind: "after-exit" };
         await sleep(EXIT_POLL_MS);
       }
@@ -298,8 +312,8 @@ export class Kitchen extends KitchenReader {
 
   stop(task: TaskId): Promise<{ view: TaskView; signalled: boolean }> {
     return this.mutate(async (viewAfterTick) => {
-      const rec = this.store.loadRecord(task, this.tails);
-      const signalled = await this.stopNow(rec, await this.liveCooks([rec]));
+      const { data: rec, live } = await this.observeTask(task);
+      const signalled = await this.stopNow(rec, live);
       return { view: await viewAfterTick(task), signalled };
     });
   }
@@ -317,8 +331,7 @@ export class Kitchen extends KitchenReader {
 
   close(task: TaskId, discard: boolean): Promise<{ view: TaskView; removal: RemoveResult | { error: string } }> {
     return this.mutate(async (viewAfterTick) => {
-      const rec = this.store.loadRecord(task, this.tails);
-      const live = await this.liveCooks([rec]);
+      const { data: rec, live } = await this.observeTask(task);
       const before = deriveTask(rec, live, this.now());
       const project = this.store.readProject(rec.spec.project);
       const git = project ? await gitFacts(project.path, rec.spec.worktree, rec.spec.branch, rec.spec.baseBranch) : undefined;
@@ -348,9 +361,8 @@ export class Kitchen extends KitchenReader {
 
   private async runTick(): Promise<TickReport> {
     if (!leaseIsMine(this.store, this.deps.self)) return { kind: "lost", holder: this.holder() };
-    const snap = this.snapshot();
+    const { data: snap, live } = await this.observe(() => this.snapshot(), (s) => s.records);
     const { records } = snap;
-    const live = await this.liveCooks(records);
     const cap = snap.config.maxCooks;
     const { views, actions } = plan(this.planInput(records, live, cap));
     const notices: Notice[] = [];
@@ -363,7 +375,11 @@ export class Kitchen extends KitchenReader {
         errors.push(`${action.kind} ${"task" in action ? action.task : ""}: ${errorMessage(e)}`);
       }
     }
-    const fresh = actions.some((a) => a.kind === "launch") ? plan(this.planInput(this.snapshot().records, await this.cooks.live(), cap)).views : views;
+    let fresh = views;
+    if (actions.some((a) => a.kind === "launch")) {
+      const after = await this.cooks.live();
+      fresh = plan(this.planInput(this.snapshot().records, after, cap)).views;
+    }
     return { kind: "ok", board: this.boardOf(fresh, snap, "owner", this.holder()), notices, errors };
   }
 
