@@ -39,11 +39,11 @@ export interface CookTask {
   taskDir: string;
   /** The run file of `run`. A launch that failed before its claim has none on disk. */
   transcript?: string;
-  /** Shows the task live in a terminal: the viewer, `node watch.ts <task dir>`. */
+  /** Shows the task live in a terminal: the viewer, `node watch.mjs <task dir>`. */
   viewer: { command: string; args: string[] };
 }
 
-export const WATCH_SCRIPT = fileURLToPath(new URL("./watch.ts", import.meta.url));
+export const WATCH_SCRIPT = fileURLToPath(new URL("./watch.mjs", import.meta.url));
 
 export interface KitchenPaths {
   taskDir(id: TaskId): string;

@@ -38,7 +38,7 @@ const installFake = async (npmRoot: string): Promise<FakeApi> => (await import(p
 type Shape = Pick<CookTask, "state" | "run" | "since" | "activity" | "outcome" | "transcript">;
 function task(id: string, shape: Shape): CookTask {
   const taskDir = `/k/tasks/${id}`;
-  return { id, project: "api", title: `Add ${id}`, worktree: `/k/worktrees/${id}`, branch: `chef/${id}`, taskDir, viewer: { command: "node", args: ["/chef/watch.ts", taskDir] }, ...shape };
+  return { id, project: "api", title: `Add ${id}`, worktree: `/k/worktrees/${id}`, branch: `chef/${id}`, taskDir, viewer: { command: "node", args: ["/chef/watch.mjs", taskDir] }, ...shape };
 }
 const snapshot = (role: CooksSnapshot["role"], ...tasks: CookTask[]): CooksSnapshot => ({ version: 1, sessionId: "sid-1", role, tasks });
 const cooking = (activity = "bash: npm test"): Shape => ({ state: "cooking", run: 1, since: 1000, activity, transcript: "/k/tasks/api-1/runs/1.jsonl" });

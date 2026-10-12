@@ -468,7 +468,7 @@ test("inside herdr the herdr add-on opens one cook tab per dispatched task and r
   const creates = calls.filter((c) => c[0] === "tab" && c[1] === "create");
   assert.deepEqual(creates, [["tab", "create", "--workspace", "w9", "--label", `cook ${id}`, "--cwd", store.readSpec(id).worktree, "--no-focus"]]);
   const runs = calls.filter((c) => c[0] === "pane" && c[1] === "run");
-  assert.deepEqual(runs, [["pane", "run", "w9:p1", `exec 'node' '${join(ROOT, "extension/watch.ts")}' '${store.taskDir(id)}'`]]);
+  assert.deepEqual(runs, [["pane", "run", "w9:p1", `exec 'node' '${join(ROOT, "extension/watch.mjs")}' '${store.taskDir(id)}'`]]);
   const states = calls.filter((c) => c[1] === "report-agent").map((c) => c[c.indexOf("--state") + 1]);
   assert.equal(states[0], "working", "the cooking run is reported as working");
   assert.equal(states.at(-1), "idle", "the done outcome is reported as idle");

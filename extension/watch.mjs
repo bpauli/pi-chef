@@ -1,5 +1,8 @@
+// @ts-check
 // Runs under plain Node outside Pi, where Pi's peer dependencies (typebox) do
 // not resolve for an installed package, so this file imports node builtins only.
+// It is JavaScript because Node does not strip types from a .ts file under
+// node_modules, which is where `pi install npm:pi-chef` puts it.
 import { closeSync, openSync, readFileSync, readSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -9,13 +12,17 @@ const CHUNK = 64 * 1024;
 const TAIL_LINES = 3;
 const PROMPT_LINES = 6;
 
-type Obj = Record<string, unknown>;
-const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
-const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
-const field = (v: unknown, key: string): unknown => (isObj(v) ? v[key] : undefined);
+/** @typedef {Record<string, unknown>} Obj */
+/** @type {(v: unknown) => v is Obj} */
+const isObj = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+/** @type {(v: unknown) => string | undefined} */
+const str = (v) => (typeof v === "string" ? v : undefined);
+/** @type {(v: unknown, key: string) => unknown} */
+const field = (v, key) => (isObj(v) ? v[key] : undefined);
 
 const tty = process.stdout.isTTY === true;
-const paint = (code: string) => (text: string) => (tty ? `\x1b[${code}m${text}\x1b[0m` : text);
+/** @type {(code: string) => (text: string) => string} */
+const paint = (code) => (text) => (tty ? `\x1b[${code}m${text}\x1b[0m` : text);
 const dim = paint("2");
 const red = paint("31");
 const cyan = paint("36");
@@ -23,40 +30,53 @@ const bold = paint("1");
 const green = paint("32");
 const yellow = paint("33");
 
-const width = (): number => Math.max(40, (tty ? process.stdout.columns : undefined) ?? 160);
-const clip = (text: string, max = width()): string => {
+/** @type {() => number} */
+const width = () => Math.max(40, (tty ? process.stdout.columns : undefined) ?? 160);
+/** @type {(text: string, max?: number) => string} */
+const clip = (text, max = width()) => {
   const chars = [...text];
   return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : text;
 };
-const flat = (text: string): string => text.replace(/\s+/g, " ").trim();
+/** @type {(text: string) => string} */
+const flat = (text) => text.replace(/\s+/g, " ").trim();
 
 let midLine = false;
-function println(text: string): void {
+/** @param {string} text */
+function println(text) {
   process.stdout.write(`${midLine ? "\n" : ""}${text}\n`);
   midLine = false;
 }
-function endLine(): void {
+function endLine() {
   if (midLine) process.stdout.write("\n");
   midLine = false;
 }
-function stream(text: string): void {
+/** @param {string} text */
+function stream(text) {
   if (!text) return;
   process.stdout.write(text);
   midLine = !text.endsWith("\n");
 }
 
-const textParts = (content: unknown): string =>
+/** @type {(content: unknown) => string} */
+const textParts = (content) =>
   Array.isArray(content) ? content.map((p) => (field(p, "type") === "text" ? (str(field(p, "text")) ?? "") : "")).join("") : (str(content) ?? "");
 
-function keyArg(tool: string, args: unknown): string {
+/**
+ * @param {string} tool
+ * @param {unknown} args
+ * @returns {string}
+ */
+function keyArg(tool, args) {
   const pick = tool === "bash" ? field(args, "command") : (field(args, "path") ?? field(args, "file_path") ?? field(args, "pattern"));
   return flat(str(pick) ?? JSON.stringify(args ?? {}));
 }
 
 let streamedText = false;
 
-function render(line: string): void {
-  let ev: unknown;
+/** @param {string} line */
+function render(line) {
+  /** @type {unknown} */
+  let ev;
   try {
     ev = JSON.parse(line);
   } catch {
@@ -121,32 +141,34 @@ function render(line: string): void {
 }
 
 class Follower {
-  private offset = 0;
-  private partial = "";
-  private readonly decoder = new StringDecoder("utf8");
-  readonly path: string;
-  constructor(path: string) {
+  #offset = 0;
+  #partial = "";
+  #decoder = new StringDecoder("utf8");
+  /** @param {string} path */
+  constructor(path) {
+    /** @readonly */
     this.path = path;
   }
 
-  drain(): void {
-    let size: number;
+  drain() {
+    /** @type {number} */
+    let size;
     try {
       size = statSync(this.path).size;
     } catch {
       return;
     }
-    if (size <= this.offset) return;
+    if (size <= this.#offset) return;
     const fd = openSync(this.path, "r");
     try {
       const buf = Buffer.alloc(CHUNK);
-      while (this.offset < size) {
-        const n = readSync(fd, buf, 0, Math.min(CHUNK, size - this.offset), this.offset);
+      while (this.#offset < size) {
+        const n = readSync(fd, buf, 0, Math.min(CHUNK, size - this.#offset), this.#offset);
         if (n <= 0) break;
-        this.offset += n;
+        this.#offset += n;
         // LF only: U+2028 is legal inside a JSON string.
-        const lines = (this.partial + this.decoder.write(buf.subarray(0, n))).split("\n");
-        this.partial = lines.pop() ?? "";
+        const lines = (this.#partial + this.#decoder.write(buf.subarray(0, n))).split("\n");
+        this.#partial = lines.pop() ?? "";
         for (const line of lines) if (line) render(line);
       }
     } finally {
@@ -155,8 +177,13 @@ class Follower {
   }
 }
 
-function latestRun(runsDir: string): number | undefined {
-  let names: string[];
+/**
+ * @param {string} runsDir
+ * @returns {number | undefined}
+ */
+function latestRun(runsDir) {
+  /** @type {string[]} */
+  let names;
   try {
     names = readdirSync(runsDir);
   } catch {
@@ -166,8 +193,13 @@ function latestRun(runsDir: string): number | undefined {
   return ns.length ? Math.max(...ns) : undefined;
 }
 
-function isClosed(logPath: string): boolean {
-  let text: string;
+/**
+ * @param {string} logPath
+ * @returns {boolean}
+ */
+function isClosed(logPath) {
+  /** @type {string} */
+  let text;
   try {
     text = readFileSync(logPath, "utf8");
   } catch {
@@ -182,11 +214,13 @@ function isClosed(logPath: string): boolean {
   });
 }
 
-function watch(taskDir: string): void {
+/** @param {string} taskDir */
+function watch(taskDir) {
   const runsDir = join(taskDir, "runs");
-  let run: { n: number; follower: Follower } | undefined;
+  /** @type {{ n: number; follower: Follower } | undefined} */
+  let run;
   let waiting = false;
-  const poll = (): void => {
+  const poll = () => {
     const latest = latestRun(runsDir);
     if (latest !== undefined && latest !== run?.n) {
       run?.follower.drain();
@@ -209,7 +243,7 @@ function watch(taskDir: string): void {
 
 const taskDir = process.argv[2];
 if (!taskDir) {
-  process.stderr.write("usage: node watch.ts <task dir>\n");
+  process.stderr.write("usage: node watch.mjs <task dir>\n");
   process.exit(2);
 }
 watch(taskDir);
