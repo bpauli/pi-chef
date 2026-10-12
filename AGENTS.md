@@ -1,6 +1,6 @@
 # AGENTS.md
 
-chef is a Pi package. One chef session dispatches and monitors cooks (child Pi processes) across projects and tasks. Read `CONTEXT.md` for the terms and `docs/design.md` for the contract before you change code.
+pi-chef is a Pi package. One chef session dispatches and monitors cooks (child Pi processes) across projects and tasks. Read `CONTEXT.md` for the terms and `docs/design.md` for the contract before you change code.
 
 ## Commands
 

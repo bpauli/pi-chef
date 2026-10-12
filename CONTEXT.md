@@ -1,4 +1,4 @@
-# chef ubiquitous language
+# pi-chef ubiquitous language
 
 Use these words in code, docs, tool text, and commit messages. One word means one thing.
 

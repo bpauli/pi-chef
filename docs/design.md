@@ -1,4 +1,4 @@
-# chef design
+# pi-chef design
 
 This file is the contract for the code in `extension/`. Terms follow `CONTEXT.md`. It was synthesized from a three-model architect arena. The base was the Opus candidate, and a Fable cross-judge agreed. The grafts and the facts measured on Pi 1.0.3 are listed at the end.
 

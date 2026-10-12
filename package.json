@@ -1,12 +1,12 @@
 {
-  "name": "chef",
+  "name": "pi-chef",
   "private": true,
   "version": "0.1.0",
   "description": "One chef you talk to, many cooks doing the work. A Pi package that dispatches and monitors subagents across projects and tasks.",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://github.com/bpauli/chef",
-  "repository": "https://github.com/bpauli/chef",
+  "homepage": "https://github.com/bpauli/pi-chef",
+  "repository": "https://github.com/bpauli/pi-chef",
   "keywords": ["pi-package", "subagents", "orchestration", "worktrees"],
   "engines": { "node": ">=22.19.0" },
   "pi": {
