@@ -37,13 +37,13 @@ The add-on duplicates the small loader and block builder of the pstack add-on in
 
 ## Install
 
-Install pi-chef first. Then install this directory as a local package:
+Install pi-chef first. Then install this add-on:
 
 ```sh
-pi install <path to pi-chef>/addons/recipe-superpowers
+pi install npm:pi-chef-recipe-superpowers
 ```
 
-Pi git sources take no subdirectory, so use the local path. When you installed pi-chef from git, the checkout is under your Pi agent directory, for example `~/.pi/agent/git/github.com/bpauli/pi-chef/addons/recipe-superpowers`.
+To use the add-on from `main`, install its directory as a local package, because Pi git sources take no subdirectory. When you installed pi-chef from git, the checkout is under your Pi agent directory, for example `~/.pi/agent/git/github.com/bpauli/pi-chef/addons/recipe-superpowers`.
 
 Cooks load your installed Pi packages, so each cook also loads this add-on. When you also installed another recipe, select one in the kitchen `config.json`, for example `"recipe": "superpowers"`, or per project with `"recipe": { "default": "pstack", "projects": { "obsync": "superpowers" } }`. Without a selection, every installed recipe adds its block.
 
