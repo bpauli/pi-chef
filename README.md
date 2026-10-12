@@ -26,7 +26,7 @@ Requirements:
 - Pi 1.0.3 or later.
 - Node 22.19 or later.
 - git.
-- Linux or macOS. On Linux, chef finds its cooks through `/proc`. The macOS path (`ps -E`) is written, but the tests do not cover it.
+- Linux or macOS. chef finds its cooks by their stdout: through `/proc` on Linux, and through `lsof` on macOS. `lsof` ships with macOS.
 
 chef itself depends on no terminal multiplexer and no other Pi package. Optional add-ons connect it to herdr, to pi-subagents, and to a recipe. See [Add-ons](#add-ons).
 
@@ -255,7 +255,7 @@ A cook is a full Pi agent with the tools of your Pi setup. Its worktree is a wor
 [firstmate](https://github.com/kunchenguid/firstmate) is an agent distro. It is a repository of bash tools, skills, and a long `AGENTS.md` that turns any coding agent CLI into a supervisor. Its workers are in tmux windows, and a bash watcher wakes the supervisor through the hook of the harness. chef is a Pi package. The differences follow from that:
 
 - Pi only, on both sides. The chef is a Pi session with seven tools. Cooks are `pi --mode json -p` processes. No tmux, no pane scraping, no wiring per harness.
-- One process model. Cooks are detached child processes. The chef finds them by a marker in their environment and reads their Pi JSONL stream. There is no watcher process. The chef session runs a one-second tick.
+- One process model. Cooks are detached child processes. The chef finds them by their stdout, the run file of the task, and reads that Pi JSONL stream. There is no watcher process. The chef session runs a one-second tick.
 - Derived state. firstmate keeps status logs, meta files, busy records, and a wake queue. chef stores no task state.
 - One writer per file. The cook never writes a chef file.
 - Small. About 3k lines of TypeScript plus tests, against the 122k lines of bash and the 6.9k-word supervisor contract of firstmate.
