@@ -1,6 +1,6 @@
-# chef
+# pi-chef
 
-One chef you talk to, many cooks doing the work. chef is a [Pi](https://pi.dev) package. In a chef session, Pi splits your request into tasks, hands each task to a cook (a child Pi process in its own git worktree and branch), and wakes up when a cook is done, needs a decision, is blocked, or failed. You talk only to the chef.
+One chef you talk to, many cooks doing the work. pi-chef is a [Pi](https://pi.dev) package. In a chef session, Pi splits your request into tasks, hands each task to a cook (a child Pi process in its own git worktree and branch), and wakes up when a cook is done, needs a decision, is blocked, or failed. You talk only to the chef.
 
 ```text
 $ pi --chef
@@ -20,7 +20,7 @@ The chef reviews the diff, asks you the one real question, answers the cook, and
 ## Install
 
 ```sh
-pi install git:github.com/bpauli/chef
+pi install git:github.com/bpauli/pi-chef
 ```
 
 Requirements: Pi 1.0.3 or later, Node 22.19 or later, git. Linux and macOS. Cooks run as detached processes and survive a chef restart. On Linux chef finds its cooks through `/proc`; the macOS path (`ps -E`) is written but not covered by the tests.
@@ -83,7 +83,7 @@ node tools/sync-pstack.mjs <path to the cursor/plugins checkout>
 
 The script replaces the vendored principles, copies the license, and writes `principles/SOURCE.md`. A second run changes nothing. Do not edit the files in `principles/` by hand.
 
-## How chef differs from firstmate
+## How pi-chef differs from firstmate
 
 [firstmate](https://github.com/kunchenguid/firstmate) is an agent distro: a repository of bash tools, skills, and a long `AGENTS.md` that turns any coding agent CLI into a supervisor, with workers in tmux windows and a bash watcher that wakes the supervisor through the harness's hook. chef is a Pi package. The differences follow from that:
 
@@ -105,3 +105,7 @@ pi -e ./extension/index.ts --chef   # try it in a real Pi session
 ```
 
 The tests need no network and no credentials. The e2e tests start real Pi processes on `test/fake-model/`, a scripted local model: a brief holds `STEP` lines, and the fake model plays them. `node test/fixtures/record.mjs` re-records the Pi stream fixtures for the unit tests.
+
+## License
+
+MIT, see `LICENSE`. The vendored pstack principles in `principles/` keep their own MIT license, see `principles/LICENSE`.
