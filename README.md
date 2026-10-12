@@ -282,7 +282,7 @@ pi -e ./extension/index.ts --chef   # try it in a real Pi session
 
 The tests need no network and no credentials. The e2e tests start real Pi processes on `test/fake-model/`, a scripted local model. A brief holds `STEP` lines, and the fake model plays them. `node test/fixtures/record.mjs` records the Pi stream fixtures for the unit tests again.
 
-The `Validate` workflow runs the typecheck and all tests on every push to `main` and on every pull request. It runs on Ubuntu with Node 22.19.0 and Node 24, and on macOS with Node 24. The macOS job reports, but does not block yet.
+The `Validate` workflow runs the typecheck and all tests on every push to `main` and on every pull request. It runs on Ubuntu with Node 22.19.0 and Node 24, and on macOS with Node 24.
 
 To release a version:
 
