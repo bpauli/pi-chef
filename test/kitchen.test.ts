@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, before, test } from "node:test";
 import { ChefError, type Notice, type Pid, type SessionId, type TaskId, millis, parseProjectName, runNo } from "../extension/domain.ts";
@@ -173,6 +173,43 @@ test("send to a cook that reported and is still exiting waits for the exit and r
   assert.deepEqual(n2.outcome, { kind: "done", summary: "used cookies", reported: true });
   assert.equal(n2.run, 2);
   assert.deepEqual(store.pendingMessages(view.spec.id), []);
+});
+
+// Blocks the event loop, so the cook (a separate process) runs on while the kitchen sits between two reads.
+function waitSync(what: string, done: () => boolean, timeoutMs = 20_000): void {
+  const deadline = Date.now() + timeoutMs;
+  while (!done()) {
+    if (Date.now() > deadline) throw new Error(`timed out: ${what}`);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  }
+}
+
+const holdersOf = (file: string): string => {
+  try {
+    return execFileSync("lsof", ["-t", "--", file], { encoding: "utf8" }).trim();
+  } catch {
+    return "";
+  }
+};
+
+test("a cook that settles and exits between the kitchen's file read and its liveness check derives done, not a crash", async () => {
+  const { kitchen, store } = await setup();
+  const read = kitchen["snapshot"].bind(kitchen);
+  let raced = false;
+  kitchen["snapshot"] = () => {
+    const snap = read();
+    const rec = snap.records[0];
+    const last = rec?.runs.at(-1);
+    if (!raced && rec && last?.claim.kind === "started" && !last.facts.settled && statSync(store.runFile(rec.spec.id, last.n)).size > 0) {
+      raced = true;
+      waitSync("the cook exits after the files were read", () => holdersOf(store.runFile(rec.spec.id, last.n)) === "");
+    }
+    return snap;
+  };
+  const { view } = await kitchen.dispatch({ project: "api", title: "Race", brief: `STEP bash: sleep 1\n${REPORT_STEP("done", "raced")}` });
+  const notice = await waitNotice(kitchen, view.spec.id);
+  assert.ok(raced, "the cook exited between the file read and the liveness check");
+  assert.deepEqual(notice.outcome, { kind: "done", summary: "raced", reported: true });
 });
 
 test("send gives up waiting for a slow exit after exitWaitMs and reports after-exit, and the tick relaunches once the cook is gone", async () => {
