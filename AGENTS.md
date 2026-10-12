@@ -12,6 +12,7 @@ CHEF_TEST_PI=$(readlink -f $(which pi)) node --test test/chef.test.ts   # chef e
 npm run check        # both
 pi -e ./extension/index.ts --chef   # try it in a real Pi session
 node addons/pstack-principles/sync-pstack.mjs <cursor/plugins checkout>   # update the vendored pstack principles
+node addons/superpowers-principles/sync-superpowers.mjs <obra/superpowers checkout>   # update the vendored superpowers skills
 ```
 
 The e2e tests start real Pi processes on `test/fake-model/`, a scripted local model. They need no network and no credentials.

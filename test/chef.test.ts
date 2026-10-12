@@ -9,9 +9,10 @@ import { Value } from "typebox/value";
 import { TICK_MS, WAKE_TIMING } from "../extension/chef.ts";
 import { scanCooks, signalCook } from "../extension/cooks.ts";
 import { PSTACK_PRINCIPLES_DIR, PSTACK_RULES } from "../addons/pstack-principles/principles.ts";
+import { SUPERPOWERS_RULES } from "../addons/superpowers-principles/superpowers.ts";
 import { Store } from "../extension/store.ts";
 import type { CooksSnapshot } from "../extension/events.ts";
-import { CHEF_ENTRY, COMMIT_STEP, COOKS_RECORDER, PSTACK_PRINCIPLES_ADDON, ROLE_RECORDER, FAKE_HERDR, HERDR_ADDON, SUBAGENTS_ADDON, installFakeSubagents, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, ROOT, type TempKitchen, makeRepo, sleep, startFakeModel, tempKitchen, until } from "./support.ts";
+import { CHEF_ENTRY, COMMIT_STEP, COOKS_RECORDER, PSTACK_PRINCIPLES_ADDON, SUPERPOWERS_PRINCIPLES_ADDON, ROLE_RECORDER, FAKE_HERDR, HERDR_ADDON, SUBAGENTS_ADDON, installFakeSubagents, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, ROOT, type TempKitchen, makeRepo, sleep, startFakeModel, tempKitchen, until } from "./support.ts";
 
 let fake: Awaited<ReturnType<typeof startFakeModel>>;
 let tk: TempKitchen;
@@ -157,6 +158,30 @@ test("the chef's model gets the pstack block when config.json selects pstack, an
   assertChefPrinciples(await echo({ projects: { api: "pstack" } }), true, "a project selection only, so no selection for the chef");
   assertChefPrinciples(await echo({ default: "none", projects: { api: "pstack" } }), false, "default none");
   assertChefPrinciples(await echo("superpowers"), false, "default superpowers, not installed");
+});
+
+test("with the pstack and superpowers add-ons, the chef's model gets both blocks without a selection, and only the block of the selected set with one", async () => {
+  tk = tempKitchen();
+  const echo = async (principles: unknown) => {
+    writeConfig(principles === undefined ? {} : { principles });
+    const run = startPi("json", ["--chef", "-e", PSTACK_PRINCIPLES_ADDON, "-e", SUPERPOWERS_PRINCIPLES_ADDON], "STEP echo-system:");
+    run.proc.stdin!.end();
+    assert.equal(await run.exited, 0);
+    return lastAssistantText(run.events);
+  };
+  const superpowersChef = (prompt: string) => SUPERPOWERS_RULES.chef.every((r) => prompt.includes(r.text)) && prompt.includes("\n# Principles: superpowers\n");
+  const both = await echo(undefined);
+  assertChefPrinciples(both, true, "no selection");
+  assert.ok(superpowersChef(both), "no selection: the superpowers chef block too");
+  for (const rule of SUPERPOWERS_RULES.cook) assert.ok(!both.includes(rule.text), `no superpowers cook rule: ${rule.text}`);
+
+  const pstack = await echo("pstack");
+  assertChefPrinciples(pstack, true, "default pstack");
+  assert.ok(!pstack.includes("# Principles: superpowers"), "default pstack: no superpowers block");
+
+  const superpowers = await echo({ default: "superpowers", projects: { api: "pstack" } });
+  assert.ok(superpowersChef(superpowers), "default superpowers: the superpowers chef block");
+  assert.ok(!superpowers.includes("# Principles: pstack"), "default superpowers: no pstack block");
 });
 
 const NotifySchema = Type.Object({ type: Type.Literal("extension_ui_request"), method: Type.Literal("notify"), message: Type.String() });

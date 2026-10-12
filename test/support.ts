@@ -16,6 +16,7 @@ export const FAKE_HERDR = join(ROOT, "addons/herdr/test/fake-herdr.mjs");
 export const HERDR_ADDON = join(ROOT, "addons/herdr/index.ts");
 export const SUBAGENTS_ADDON = join(ROOT, "addons/subagents/index.ts");
 export const PSTACK_PRINCIPLES_ADDON = join(ROOT, "addons/pstack-principles/index.ts");
+export const SUPERPOWERS_PRINCIPLES_ADDON = join(ROOT, "addons/superpowers-principles/index.ts");
 
 /** Installs a fake pi-subagents under an npm root, the way Pi lays out an npm package. Returns the path of its external-runs module. */
 export function installFakeSubagents(npmRoot: string): string {

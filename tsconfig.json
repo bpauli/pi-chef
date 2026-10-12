@@ -12,5 +12,6 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["extension", "test", "addons"]
+  "include": ["extension", "test", "addons"],
+  "exclude": ["addons/*/principles"]
 }

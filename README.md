@@ -62,15 +62,17 @@ chef itself depends on no terminal multiplexer and no other Pi package. It publi
 | `addons/herdr` | Inside herdr, opens a `cook <task id>` tab per cooking task that shows the cook live, and shows each cook's state in the herdr sidebar. See `addons/herdr/README.md`. |
 | `addons/subagents` | Shows each open task as a job in the FleetView of [pi-subagents](https://pi.dev/packages/pi-subagents): running, completed, failed, or stopped when it needs you or was stopped. See `addons/subagents/README.md`. |
 | `addons/pstack-principles` | A principle set: the chef and every cook work by the principles of [pstack](https://github.com/cursor/plugins/tree/main/pstack), the agent plugin by Lauren Tan. Each gets the always-on rules of its role and an index of the 24 vendored principle files in its system prompt. See `addons/pstack-principles/README.md`. |
+| `addons/superpowers-principles` | A principle set: the chef and every cook work by the skills of [superpowers](https://github.com/obra/superpowers) by Jesse Vincent. The chef gets the planning and orchestration skills, a cook the implementation skills, each with always-on rules and an index of the 10 vendored skill files. See `addons/superpowers-principles/README.md`. |
 
 Pi git sources take no subdirectory, so install an add-on from a local path, for example from the checkout that `pi install git:github.com/bpauli/pi-chef` made:
 
 ```sh
 pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/herdr
 pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/pstack-principles
+pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/superpowers-principles
 ```
 
-A principle set is your choice of how the chef and the cooks work. chef has no principle set of its own. pstack is the first set. Install the sets that you want, then select one with `principles` in `config.json` (see "Configuration"). Without a selection, every installed set adds its block. Another set can follow the same contract (see `docs/design.md`, "Principle sets").
+A principle set is your choice of how the chef and the cooks work. chef has no principle set of its own. The sets are `pstack` and `superpowers`. Install the sets that you want, then select one with `principles` in `config.json` (see "Configuration"). Without a selection, every installed set adds its block. Another set can follow the same contract (see `docs/design.md`, "Principle sets").
 
 ## Configuration
 
@@ -96,7 +98,7 @@ The kitchen lives in `<pi agent dir>/chef` (usually `~/.pi/agent/chef`). Set `CH
     "default": [{ "model": "anthropic/claude-sonnet-5-5", "thinking": "medium" }, { "model": "openai/gpt-6-astra" }]
   },
   "cookArgs": ["--no-skills"],
-  "principles": { "default": "pstack", "projects": { "api": "none" } }
+  "principles": { "default": "pstack", "projects": { "obsync": "superpowers", "api": "none" } }
 }
 ```
 
@@ -142,4 +144,4 @@ The tests need no network and no credentials. The e2e tests start real Pi proces
 
 ## License
 
-MIT, see `LICENSE`. The vendored pstack principles in `addons/pstack-principles/principles/` keep their own MIT license, see `addons/pstack-principles/principles/LICENSE`.
+MIT, see `LICENSE`. The vendored pstack principles in `addons/pstack-principles/principles/` keep their own MIT license, see `addons/pstack-principles/principles/LICENSE`. The vendored superpowers skills in `addons/superpowers-principles/principles/` keep their own MIT license (Copyright (c) 2025 Jesse Vincent), see `addons/superpowers-principles/principles/LICENSE`.

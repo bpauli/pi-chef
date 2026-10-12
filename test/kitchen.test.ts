@@ -8,8 +8,9 @@ import { alive, runsSession, scanCooks, signalCook } from "../extension/cooks.ts
 import { boardHeader } from "../extension/derive.ts";
 import { Kitchen, type KitchenDeps, KitchenReader, type Opened } from "../extension/kitchen.ts";
 import { PSTACK_PRINCIPLES_DIR, PSTACK_RULES } from "../addons/pstack-principles/principles.ts";
+import { SUPERPOWERS_DIR, SUPERPOWERS_RULES } from "../addons/superpowers-principles/superpowers.ts";
 import { RunTails, Store } from "../extension/store.ts";
-import { CHEF_ENTRY, COMMIT_STEP, FAKE_MODEL, FAKE_PROVIDER, NEVER_EXIT, PI_CLI, PSTACK_PRINCIPLES_ADDON, REPORT_STEP, ROLE_RECORDER, SLOW_EXIT, type TempKitchen, git, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
+import { CHEF_ENTRY, COMMIT_STEP, FAKE_MODEL, FAKE_PROVIDER, NEVER_EXIT, PI_CLI, PSTACK_PRINCIPLES_ADDON, REPORT_STEP, SUPERPOWERS_PRINCIPLES_ADDON, ROLE_RECORDER, SLOW_EXIT, type TempKitchen, git, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
 
 let fake: Awaited<ReturnType<typeof startFakeModel>>;
 let tk: TempKitchen;
@@ -264,6 +265,22 @@ test("a config.json edit between two runs of a task changes the cook's principle
   const second = await waitNotice(kitchen, view.spec.id);
   assert.equal(second.run, 2);
   assert.ok(promptOf(second).includes("\n# Principles: pstack\n"), "run 2: the default set pstack");
+});
+
+test("with the pstack and superpowers add-ons, a cook of a project set to superpowers gets the cook contract and only the superpowers cook block", async () => {
+  const { kitchen } = await setup({
+    cookArgs: ["-e", FAKE_PROVIDER, "-e", PSTACK_PRINCIPLES_ADDON, "-e", SUPERPOWERS_PRINCIPLES_ADDON],
+    principles: { default: "pstack", projects: { api: "superpowers" } },
+  });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Superpowers", brief: "STEP echo-system:" });
+  const prompt = promptOf(await waitNotice(kitchen, view.spec.id));
+  assertCookContract(prompt, "Superpowers");
+  assert.ok(prompt.includes("\n# Principles: superpowers\n"), "the superpowers block");
+  for (const rule of SUPERPOWERS_RULES.cook) assert.ok(prompt.includes(rule.text), `superpowers cook rule: ${rule.text}`);
+  for (const rule of SUPERPOWERS_RULES.chef) assert.ok(!prompt.includes(rule.text), `no superpowers chef rule: ${rule.text}`);
+  assert.ok(prompt.includes(join(SUPERPOWERS_DIR, "systematic-debugging", "SKILL.md")), "the index names the vendored files");
+  assert.ok(!prompt.includes("# Principles: pstack"), "no pstack block: the project selection wins over the default");
+  assert.ok(prompt.indexOf("End every run with exactly one chef_report call") < prompt.indexOf("# Principles: superpowers"), "the block follows the cook contract");
 });
 
 test("a role request in a cook process gets cook", async () => {
