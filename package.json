@@ -1,6 +1,6 @@
 {
   "name": "pi-chef",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "One chef you talk to, many cooks doing the work. A Pi package that dispatches and monitors subagents across projects and tasks.",
   "type": "module",
   "license": "MIT",

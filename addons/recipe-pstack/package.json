@@ -1,6 +1,6 @@
 {
   "name": "pi-chef-recipe-pstack",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Optional pi-chef recipe: the chef and every cook work by the pstack principles.",
   "type": "module",
   "license": "MIT",

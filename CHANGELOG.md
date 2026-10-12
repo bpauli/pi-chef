@@ -2,6 +2,12 @@
 
 Each release has one section `## <version>`. The release workflow uses the section text as the notes of the GitHub release. Write the section before you push the tag.
 
+## 0.2.1
+
+### Changed
+
+- The Release workflow publishes the five npm packages through npm Trusted Publishing, so each version has a provenance attestation that links it to its GitHub Actions run. 0.2.0 was published by hand. The code is the same as in 0.2.0.
+
 ## 0.2.0
 
 ### Added
