@@ -10,6 +10,7 @@
   "keywords": ["pi-package", "subagents", "orchestration", "worktrees"],
   "engines": { "node": ">=22.19.0" },
   "pi": {
+    "image": "https://raw.githubusercontent.com/bpauli/pi-chef/main/docs/assets/pi-chef-gallery.png",
     "extensions": ["./extension/index.ts"],
     "skills": ["./skills"]
   },

@@ -2,12 +2,7 @@
 
 [![Validate](https://github.com/bpauli/pi-chef/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/bpauli/pi-chef/actions/workflows/validate.yml)
 
-```text
-chef  2/3 cooks  1 needs you
-● api-7   cooking         anthropic/claude-sonnet-5-5  bash: make test  6m
-! web-2   needs decision  openai/gpt-6-astra           keep the cookie session or move to bearer tokens?  2m
-● docs-3  cooking         anthropic/claude-haiku-5     edit: docs/install.md  40s
-```
+![pi-chef: one chef you talk to, many cooks doing the work](docs/assets/pi-chef-gallery.png)
 
 **One chef you talk to, many cooks doing the work.**
 
@@ -15,7 +10,14 @@ chef  2/3 cooks  1 needs you
 
 It is a **kitchen of Pi processes**, not a terminal multiplexer and not a merge bot. Each cook does one task on one branch. The chef does the judgment: it writes the briefs, reviews the diffs, answers the cooks, and asks you only the real questions. You decide what lands.
 
-The widget above shows the live board below the Pi editor. It shows each open task, its state, the model of its cook, what the cook does now, and its age.
+A widget below the Pi editor shows the live board. It shows each open task, its state, the model of its cook, what the cook does now, and its age:
+
+```text
+chef  2/3 cooks  1 needs you
+● api-7   cooking         anthropic/claude-sonnet-5-5  bash: make test  6m
+! web-2   needs decision  openai/gpt-6-astra           keep the cookie session or move to bearer tokens?  2m
+● docs-3  cooking         anthropic/claude-haiku-5     edit: docs/install.md  40s
+```
 
 ## Install
 
