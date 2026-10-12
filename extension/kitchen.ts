@@ -83,7 +83,7 @@ export class KitchenReader {
   protected readonly deps: KitchenDeps;
   protected readonly store: Store;
   protected readonly tails = new RunTails();
-  protected readonly cooks = new CookTable();
+  protected readonly cooks: CookTable;
   protected readonly now: () => Millis;
   private readonly scannedUnknownRuns = new Set<string>();
   private readonly fullyClosed = new Set<TaskId>();
@@ -91,6 +91,7 @@ export class KitchenReader {
   constructor(deps: KitchenDeps) {
     this.deps = deps;
     this.store = deps.store;
+    this.cooks = new CookTable(this.store.tasksDir());
     this.now = deps.now ?? (() => millis(Date.now()));
   }
 
