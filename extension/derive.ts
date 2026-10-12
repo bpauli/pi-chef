@@ -6,9 +6,11 @@ import {
   type CookReport,
   CookReportSchema,
   type Millis,
+  type ModelsConfig,
   type Notice,
   type Outcome,
   type Pid,
+  type Profile,
   type RunNo,
   type TaskEvent,
   type TaskId,
@@ -493,4 +495,64 @@ export function formatAge(since: Millis, now: Millis): string {
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}d`;
+}
+
+/** Why a model cannot run a cook, or undefined when it can. */
+export type ModelCheck = (model: string) => string | undefined;
+
+export interface Dropped {
+  model: string;
+  why: string;
+}
+
+export type Selection = { kind: "chosen"; models: Profile[]; rule: string | undefined; dropped: Dropped[] } | { kind: "refused"; reason: string };
+
+export function selectModels(config: ModelsConfig, choice: { model?: string; rule?: string }, check: ModelCheck): Selection {
+  let first: Profile[] = [];
+  let rule: string | undefined;
+  if (choice.model !== undefined) {
+    first = [{ model: choice.model }];
+  } else if (choice.rule !== undefined) {
+    const name = choice.rule.trim();
+    const found = config.rules.find((r) => r.name === name);
+    if (!found) {
+      const known = config.rules.map((r) => r.name).join(", ");
+      return { kind: "refused", reason: `Unknown model rule "${choice.rule}". ${known ? `Rules: ${known}.` : "config.json has no model rules."} Leave rule out for the default models.` };
+    }
+    first = found.use;
+    rule = found.name;
+  }
+  const candidates = [...first, ...config.default].filter((p, i, all) => all.findIndex((q) => q.model === p.model) === i);
+  const dropped: Dropped[] = [];
+  const models = candidates.filter((p) => {
+    const why = check(p.model);
+    if (why !== undefined) dropped.push({ model: p.model, why });
+    return why === undefined;
+  });
+  if (candidates.length > 0 && models.length === 0) {
+    return { kind: "refused", reason: `No candidate model can run: ${droppedText(dropped)}. Fix models in config.json, or pass another model.` };
+  }
+  return { kind: "chosen", models, rule, dropped };
+}
+
+export function droppedText(dropped: readonly Dropped[]): string {
+  return dropped.map((d) => `${d.model} (${d.why})`).join(", ");
+}
+
+export function profileText(p: Profile): string {
+  return p.thinking === undefined ? p.model : `${p.model} (thinking ${p.thinking})`;
+}
+
+/** The section of the chef's system prompt that lets the chef model pick a rule per task. None without rules: there is nothing to pick. */
+export function modelsPrompt(config: ModelsConfig): string | undefined {
+  if (config.rules.length === 0) return undefined;
+  const list = (ps: readonly Profile[]): string => (ps.length ? ps.map(profileText).join(", ") : "Pi's default model");
+  return [
+    "## Cook models",
+    "",
+    "Each chef_dispatch picks the cook's models. Read the task, choose the rule whose `when` fits it best, and pass its name as `rule`. When no rule fits, leave `rule` out: the task gets the default models. Pass `model` only when the human names a model.",
+    "",
+    ...config.rules.map((r) => `- ${r.name}: when ${sentence(r.when)}${r.why ? ` Why: ${sentence(r.why)}` : ""} Models: ${list(r.use)}.`),
+    `- Default models: ${list(config.default)}.`,
+  ].join("\n");
 }

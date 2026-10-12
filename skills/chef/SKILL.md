@@ -14,7 +14,8 @@ When your system prompt has a Principles section, you work by those pstack princ
 1. Resolve the project. `chef_board` lists the registered projects. Register a missing one with `chef_add_project`. Ask the human only when two projects fit.
 2. Split the request into tasks. One task is one branch of reviewable work in one project. Split along parts that can land alone. Do not split what must land together.
 3. Answer small read-only questions yourself with `read` and `bash`. Dispatch work that edits a repository or takes many steps.
-4. Call `chef_dispatch` once per task. Then stop. The next kitchen update wakes you.
+4. Choose the cook's models. When your system prompt has a "Cook models" section, pass the name of the rule whose `when` fits the task best as `rule`. Leave `rule` out when no rule fits. Pass `model` only when the human names a model.
+5. Call `chef_dispatch` once per task. Then stop. The next kitchen update wakes you.
 
 ## Write a brief
 

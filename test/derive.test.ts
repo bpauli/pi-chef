@@ -5,6 +5,7 @@ import { test } from "node:test";
 import {
   ChefError,
   type Pid,
+  type ModelsConfig,
   type TaskEvent,
   type TaskId,
   type TaskSpec,
@@ -25,9 +26,11 @@ import {
   deriveTask,
   foldRunLine,
   formatWake,
+  modelsPrompt,
   noticeFor,
   outcomeOf,
   plan,
+  selectModels,
   statusText,
 } from "../extension/derive.ts";
 
@@ -478,4 +481,69 @@ test("a read-only board names the owner pid in its header", () => {
   const view = deriveTask(record(), none, NOW);
   const board = { role: "read-only" as const, holder: { pid: 77 as Pid, sessionId: "s" }, projects: [], open: [view], broken: [], closedCount: 0, cooks: { busy: 0, cap: 3 } };
   assert.equal(boardLines(board, NOW, 80)[0], "chef (read-only, pid 77 owns the kitchen)");
+});
+
+const MODELS: ModelsConfig = {
+  rules: [
+    { name: "deep", when: "a hard bug", use: [{ model: "a/opus", thinking: "high" }, { model: "b/gpt" }], why: "judgment" },
+    { name: "docs", when: "docs only", use: [{ model: "c/mini" }], why: undefined },
+  ],
+  default: [{ model: "b/gpt", thinking: "medium" }, { model: "d/local" }],
+};
+const allAvailable = () => undefined;
+
+test("a rule's models come first, then the default list, with one entry per model", () => {
+  assert.deepEqual(selectModels(MODELS, { rule: "deep" }, allAvailable), {
+    kind: "chosen",
+    models: [{ model: "a/opus", thinking: "high" }, { model: "b/gpt" }, { model: "d/local" }],
+    rule: "deep",
+    dropped: [],
+  });
+  assert.deepEqual(selectModels(MODELS, {}, allAvailable), { kind: "chosen", models: MODELS.default, rule: undefined, dropped: [] });
+});
+
+test("an explicit model wins over a rule and is followed by the default list", () => {
+  assert.deepEqual(selectModels(MODELS, { model: "e/x", rule: "docs" }, allAvailable), {
+    kind: "chosen",
+    models: [{ model: "e/x" }, ...MODELS.default],
+    rule: undefined,
+    dropped: [],
+  });
+});
+
+test("an unknown rule is refused with the names of the rules", () => {
+  const s = selectModels(MODELS, { rule: "fast" }, allAvailable);
+  assert.equal(s.kind, "refused");
+  assert.match(s.kind === "refused" ? s.reason : "", /Unknown model rule "fast"\. Rules: deep, docs\./);
+  assert.match((selectModels({ rules: [], default: [] }, { rule: "fast" }, allAvailable) as { reason: string }).reason, /config\.json has no model rules/);
+});
+
+test("a model the check refuses is dropped with its reason, and a dispatch with no model left is refused with every reason", () => {
+  const check = (m: string) => (m === "a/opus" ? "Pi does not know this model" : m === "d/local" ? "no credentials for provider d" : undefined);
+  assert.deepEqual(selectModels(MODELS, { rule: "deep" }, check), {
+    kind: "chosen",
+    models: [{ model: "b/gpt" }],
+    rule: "deep",
+    dropped: [{ model: "a/opus", why: "Pi does not know this model" }, { model: "d/local", why: "no credentials for provider d" }],
+  });
+  const none = selectModels(MODELS, { rule: "docs" }, () => "gone");
+  assert.equal(none.kind, "refused");
+  assert.match(none.kind === "refused" ? none.reason : "", /No candidate model can run: c\/mini \(gone\), b\/gpt \(gone\), d\/local \(gone\)\./);
+  assert.deepEqual(selectModels({ rules: [], default: [] }, {}, () => "gone"), { kind: "chosen", models: [], rule: undefined, dropped: [] }, "no candidates leaves the model to Pi");
+});
+
+test("the chef's models section lists each rule with when, why, and models, then the default list, and is absent without rules", () => {
+  assert.equal(
+    modelsPrompt(MODELS),
+    [
+      "## Cook models",
+      "",
+      "Each chef_dispatch picks the cook's models. Read the task, choose the rule whose `when` fits it best, and pass its name as `rule`. When no rule fits, leave `rule` out: the task gets the default models. Pass `model` only when the human names a model.",
+      "",
+      "- deep: when a hard bug. Why: judgment. Models: a/opus (thinking high), b/gpt.",
+      "- docs: when docs only. Models: c/mini.",
+      "- Default models: b/gpt (thinking medium), d/local.",
+    ].join("\n"),
+  );
+  assert.equal(modelsPrompt({ rules: [], default: MODELS.default }), undefined);
 });

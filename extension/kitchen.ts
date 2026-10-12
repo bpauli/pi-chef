@@ -22,7 +22,7 @@ import {
   parseProjectName,
   slugProjectName,
 } from "./domain.ts";
-import { type Action, type GitFacts, type LiveCooks, type PlanInput, type TaskRecord, closeVerdict, deriveTask, nextRunOf, plan, queuePosition, stateText } from "./derive.ts";
+import { type Action, type Dropped, type GitFacts, type LiveCooks, type ModelCheck, type PlanInput, type TaskRecord, closeVerdict, deriveTask, nextRunOf, plan, queuePosition, selectModels, stateText } from "./derive.ts";
 import { type CookEnd, CookTable, type PiInvocation, firstPrompt, followUpPrompt, launchCook, messagesSection, pidStart, signalCook } from "./cooks.ts";
 import { type RemoveResult, diffstat, ensureWorktree, gitFacts, inspectRepo, removeWorktree, verifyBaseBranch } from "./git.ts";
 import { RunTails, type Snapshot, type Store } from "./store.ts";
@@ -32,6 +32,8 @@ export interface KitchenDeps {
   pi: PiInvocation;
   chefEntry: string;
   self: { pid: Pid; sessionId: string };
+  /** Without it, every candidate counts as available. */
+  modelCheck?: ModelCheck;
   now?: () => Millis;
   killGraceMs?: number;
   exitGraceMs?: number;
@@ -47,6 +49,12 @@ export interface DispatchInput {
   title: string;
   brief: string;
   model?: string;
+  rule?: string;
+}
+
+export interface Dispatched {
+  view: TaskView;
+  dropped: Dropped[];
 }
 
 export type Delivery =
@@ -229,12 +237,13 @@ export class Kitchen extends KitchenReader {
     });
   }
 
-  dispatch(input: DispatchInput): Promise<TaskView> {
+  dispatch(input: DispatchInput): Promise<Dispatched> {
     return this.mutate(async (viewAfterTick) => {
       const project = this.requireProject(input.project);
-      const { config } = this.store.loadConfig();
-      const explicit = input.model === undefined ? [] : [{ model: parseModel(input.model) }];
-      const models = [...explicit, ...config.models.default].filter((p, i, all) => all.findIndex((q) => q.model === p.model) === i);
+      const choice = { model: input.model === undefined ? undefined : parseModel(input.model), rule: input.rule };
+      const selection = selectModels(this.store.loadConfig().config.models, choice, this.deps.modelCheck ?? (() => undefined));
+      if (selection.kind === "refused") throw new ChefError(selection.reason);
+      const { models, rule } = selection;
       let id: TaskId | undefined;
       for (let attempt = 0; attempt < 5 && !id; attempt++) {
         const candidate = this.store.nextTaskId(project.name);
@@ -248,12 +257,13 @@ export class Kitchen extends KitchenReader {
           baseBranch: project.baseBranch,
           sessionId: randomUUID() as SessionId,
           models,
+          rule,
           createdAt: this.now(),
         });
         if (created.kind === "created") id = candidate;
       }
       if (!id) throw new ChefError(`Could not allocate a task id for ${project.name}.`);
-      return viewAfterTick(id);
+      return { view: await viewAfterTick(id), dropped: selection.dropped };
     });
   }
 

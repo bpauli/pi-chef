@@ -15,6 +15,8 @@ Use these words in code, docs, tool text, and commit messages. One word means on
 | brief | The instructions for a task, written by the chef. It says the intent, what done means, and how to deliver. | `extension/domain.ts` |
 | cook | A child Pi process that works on one task. A cook runs detached, so it can outlive the chef session. | `extension/cooks.ts` |
 | run | One cook process lifetime for a task. A task has one or more runs. Run `n` writes `runs/<n>.jsonl`. A later run continues the same Pi session. | `extension/store.ts` |
+| model rule | An entry in `config.json` `models.rules`: a `name`, a plain-words `when` (the kind of task it fits), the models to `use`, and an optional `why`. The chef model reads the rules in its system prompt and names one per dispatch. | `extension/derive.ts` |
+| candidate | One model, with an optional thinking level, in the ordered list a task may run on: the chosen rule's models or an explicit model, then the default models, without models that Pi cannot run. The list is fixed in `task.json` at dispatch. | `extension/derive.ts` |
 | report | The cook's structured status, given with the `chef_report` tool at the end of a run: `done`, `needs_decision`, `blocked`, or `failed`, with a summary. | `extension/cook.ts` |
 | outcome | How a finished run ended, derived from the run file: done, needs decision, blocked, failed, or stopped. | `extension/derive.ts` |
 | task state | `queued`, `cooking`, `idle` (with an outcome), or `closed`. Always derived from files and live processes. Never stored. | `extension/derive.ts` |

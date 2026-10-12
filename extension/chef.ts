@@ -6,7 +6,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { COOKS_EVENT, COOKS_REQUEST_EVENT, type CooksSnapshot, ROLE_EVENT, answerRole, cooksSnapshot, offSnapshot } from "./events.ts";
 import { type Board, ChefError, ChefModeEntrySchema, errorMessage, type Millis, type Notice, type NoticeRef, type Pid, type TaskId, type WakeDetails, WakeDetailsSchema, millis, parseTaskId, runNo } from "./domain.ts";
-import { type RestartNote, boardHeader, outcomeDetail, boardLines, formatAge, formatWake, outcomeText, plural, queuePosition, stateText, statusText } from "./derive.ts";
+import { type ModelCheck, type RestartNote, boardHeader, droppedText, modelsPrompt, outcomeDetail, boardLines, formatAge, formatWake, outcomeText, plural, queuePosition, stateText, statusText } from "./derive.ts";
 import { piInvocation } from "./cooks.ts";
 import { Kitchen, type KitchenReader, type TaskResult, lostError } from "./kitchen.ts";
 import { Store, kitchenDir } from "./store.ts";
@@ -35,7 +35,8 @@ const DispatchParams = Type.Object(
     brief: Type.String({
       description: "Everything the cook needs: the intent in the human's words, what done means and the check that proves it, constraints, and the delivery (commit only, push, or open a PR). The cook cannot see this conversation.",
     }),
-    model: Type.Optional(Type.String({ description: "provider/model for this cook. Default: the kitchen config." })),
+    model: Type.Optional(Type.String({ description: "provider/model for this cook, only when the human names one. It goes before the default models." })),
+    rule: Type.Optional(Type.String({ description: "Name of the model rule that fits this task, from the Cook models section. Leave out for the default models." })),
   },
   { additionalProperties: false },
 );
@@ -138,6 +139,19 @@ interface ChefSession {
 const agentDir = (): string => process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
 const now = (): Millis => millis(Date.now());
 
+/** Matches a model the way `pi --model` matches exactly: `provider/id`, else an id that only one model has. */
+export function modelCheck(registry: ExtensionContext["modelRegistry"]): ModelCheck {
+  return (ref) => {
+    const key = ref.trim().toLowerCase();
+    const all = registry.getAll();
+    const exact = all.filter((m) => `${m.provider}/${m.id}`.toLowerCase() === key);
+    const byId = all.filter((m) => m.id.toLowerCase() === key);
+    const model = exact.length === 1 ? exact[0] : exact.length === 0 && byId.length === 1 ? byId[0] : undefined;
+    if (!model) return "Pi does not know this model";
+    return registry.hasConfiguredAuth(model) ? undefined : `no credentials for provider ${model.provider}`;
+  };
+}
+
 export function installChef(pi: ExtensionAPI): void {
   let session: ChefSession | undefined;
 
@@ -176,7 +190,7 @@ export function installChef(pi: ExtensionAPI): void {
     const store = new Store(kitchenDir(process.env, agentDir()));
     const sessionId = ctx.sessionManager.getSessionId();
     const self = { pid: process.pid as Pid, sessionId };
-    const opened = await Kitchen.open({ store, pi: piInvocation(), chefEntry: CHEF_ENTRY, self }, { takeover });
+    const opened = await Kitchen.open({ store, pi: piInvocation(), chefEntry: CHEF_ENTRY, self, modelCheck: modelCheck(ctx.modelRegistry) }, { takeover });
     const owner = opened.kind === "owner" ? opened.kitchen : undefined;
     const current: ChefSession = {
       sessionId,
@@ -296,6 +310,10 @@ export function installChef(pi: ExtensionAPI): void {
     void s.owner.markNotified(notices).catch(() => undefined);
   });
   pi.on("agent_settled", () => session?.waker?.settled());
+  pi.on("before_agent_start", (event) => {
+    const models = session && modelsPrompt(session.store.loadConfig().config.models);
+    return models ? { systemPrompt: `${event.systemPrompt}\n\n${models}` } : undefined;
+  });
 
   const reader = (): KitchenReader => {
     if (!session) throw new ChefError("Chef mode is off. Run /chef, or start pi with --chef.");
@@ -337,12 +355,13 @@ export function installChef(pi: ExtensionAPI): void {
     parameters: DispatchParams,
     async execute(_id, params) {
       const k = owner();
-      const view = await k.dispatch(params);
+      const { view, dropped } = await k.dispatch(params);
       const board = await k.board();
       const cooks = `${board.cooks.busy}/${board.cooks.cap} cooks busy`;
-      if (view.state.kind === "cooking") return text(`${view.spec.id} is cooking on branch ${view.spec.branch} (${cooks}). You will get a kitchen update when it needs you.`);
-      if (view.state.kind === "idle") return text(`${view.spec.id} failed to launch: ${view.state.outcome.kind === "failed" ? view.state.outcome.reason : outcomeText(view.state.outcome)}. Fix the cause, then chef_send ${view.spec.id} to retry.`);
-      return text(`${view.spec.id} is queued, position ${queuePosition(board, view.spec.id)} (${cooks}). It starts when a cook frees up.`);
+      const skipped = dropped.length ? ` Skipped models: ${droppedText(dropped)}.` : "";
+      if (view.state.kind === "cooking") return text(`${view.spec.id} is cooking on branch ${view.spec.branch} (${cooks}).${skipped} You will get a kitchen update when it needs you.`);
+      if (view.state.kind === "idle") return text(`${view.spec.id} failed to launch: ${view.state.outcome.kind === "failed" ? view.state.outcome.reason : outcomeText(view.state.outcome)}.${skipped} Fix the cause, then chef_send ${view.spec.id} to retry.`);
+      return text(`${view.spec.id} is queued, position ${queuePosition(board, view.spec.id)} (${cooks}).${skipped} It starts when a cook frees up.`);
     },
   });
 

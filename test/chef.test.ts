@@ -183,6 +183,40 @@ test("a dispatch leads to exactly one chef-wake that starts a turn, and chef_res
   assert.equal(JSON.stringify(lastText?.message?.content), JSON.stringify([{ type: "text", text: "reviewed" }]));
 });
 
+test("the chef's prompt lists the model rules only in chef mode, and chef_dispatch refuses an unknown rule and skips a model Pi does not know", async () => {
+  const rules = [
+    { name: "deep", when: "a hard bug", use: [{ model: "fake/unknown" }, { model: FAKE_MODEL, thinking: "low" }], why: "it needs judgment" },
+    { name: "docs", when: "docs only", use: { model: FAKE_MODEL } },
+  ];
+  tk = tempKitchen({ model: undefined, models: { rules, default: { model: FAKE_MODEL } } });
+  const plain = startPi("json", [], "STEP echo-system:");
+  plain.proc.stdin!.end();
+  assert.equal(await plain.exited, 0);
+  assert.doesNotMatch(lastAssistantText(plain.events), /Cook models/);
+
+  const repo = makeRepo(tk.home, "api");
+  const script = [
+    `STEP tool chef_add_project ${JSON.stringify({ path: repo })}`,
+    `STEP tool chef_dispatch ${JSON.stringify({ project: "api", title: "Bad rule", brief: "x", rule: "nope" })}`,
+    `STEP tool chef_dispatch ${JSON.stringify({ project: "api", title: "Hard bug", brief: REPORT_STEP("done", "fixed"), rule: "deep" })}`,
+    "STEP echo-system:",
+  ].join("\n");
+  const chef = startPi("json", ["--chef"], script);
+  chef.proc.stdin!.end();
+  assert.equal(await chef.exited, 0);
+  const prompt = lastAssistantText(chef.events);
+  assert.match(prompt, /## Cook models/);
+  assert.match(prompt, /- deep: when a hard bug\. Why: it needs judgment\. Models: fake\/unknown, fake\/scripted \(thinking low\)\./);
+  assert.match(prompt, /- docs: when docs only\. Models: fake\/scripted\./);
+  assert.match(prompt, /- Default models: fake\/scripted\./);
+
+  const dispatches = chef.events.filter((e) => e.type === "tool_execution_end" && e.toolName === "chef_dispatch").map((e) => e.result?.content?.map((c) => c.text ?? "").join("") ?? "");
+  assert.match(dispatches[0]!, /Unknown model rule "nope"\. Rules: deep, docs\./);
+  assert.match(dispatches[1]!, /^api-1 is cooking .* Skipped models: fake\/unknown \(Pi does not know this model\)\./);
+  const spec = new Store(tk.kitchenDir).readSpec("api-1" as never);
+  assert.deepEqual({ models: spec.models, rule: spec.rule }, { models: [{ model: FAKE_MODEL, thinking: "low" }], rule: "deep" });
+});
+
 async function chefBusyWhileCookFinishes(sleepSeconds: number) {
   tk = tempKitchen();
   const repo = makeRepo(tk.home, "api");

@@ -78,13 +78,33 @@ The kitchen lives in `<pi agent dir>/chef` (usually `~/.pi/agent/chef`). Set `CH
 {
   "maxCooks": 3,
   "models": {
+    "rules": [
+      {
+        "name": "deep",
+        "when": "architecture, a hard bug, or a change across many files",
+        "use": [{ "model": "anthropic/claude-opus-5-5", "thinking": "high" }, { "model": "openai/gpt-6-astra", "thinking": "high" }],
+        "why": "these tasks need the strongest judgment"
+      },
+      {
+        "name": "small",
+        "when": "a typo, a docs edit, or a one-line fix",
+        "use": { "model": "anthropic/claude-haiku-5" }
+      }
+    ],
     "default": [{ "model": "anthropic/claude-sonnet-5-5", "thinking": "medium" }, { "model": "openai/gpt-6-astra" }]
   },
   "cookArgs": ["--no-skills"]
 }
 ```
 
-Every field is optional. `maxCooks` caps the cooks that run at once (default 3). `models.default` is the list of cook models, in order of preference. Each entry is a `provider/id` model and an optional `thinking` level. `chef_dispatch` can set a model per task, which goes before the default list. `cookArgs` are extra `pi` arguments for every cook.
+Every field is optional. `maxCooks` caps the cooks that run at once (default 3). `cookArgs` are extra `pi` arguments for every cook.
+
+`models` tells the chef which cook models to use. Each entry is a `provider/id` model and an optional `thinking` level. `use` and `default` take one entry or a list in order of preference.
+
+- `rules` are for kinds of tasks. The chef reads each rule's `name`, `when`, and `why` in its system prompt, and picks the rule that fits the task best when it dispatches. Rule names are lowercase letters, digits, and dashes, and are unique.
+- `default` is for tasks that no rule fits. A rule's models are followed by the default list.
+
+At dispatch, the chef skips a model that Pi does not know or that has no credentials, and says so. The remaining list is fixed for the task. `chef_dispatch` can also set a model per task, which goes first.
 
 The older form `{ "model": "openai/gpt-6-astra", "thinking": "medium" }` still works. It is the same as a default list of one.
 

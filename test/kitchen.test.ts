@@ -81,8 +81,8 @@ test("addProject without a name slugifies the repository directory name", async 
 test("dispatch to two projects: each cook commits and reports done, one notice per task, and the result shows one unlanded commit", async () => {
   const { kitchen, store, repos } = await setup();
   const brief = (f: string) => `Intent: add ${f}.\n${COMMIT_STEP(f)}\n${REPORT_STEP("done", `added ${f}`)}`;
-  const a = await kitchen.dispatch({ project: "api", title: "Add a", brief: brief("a.txt") });
-  const w = await kitchen.dispatch({ project: "web", title: "Add w", brief: brief("w.txt") });
+  const { view: a } = await kitchen.dispatch({ project: "api", title: "Add a", brief: brief("a.txt") });
+  const { view: w } = await kitchen.dispatch({ project: "web", title: "Add w", brief: brief("w.txt") });
   assert.equal(a.spec.id, "api-1");
   assert.equal(w.spec.id, "web-1");
   assert.equal(a.state.kind, "cooking");
@@ -110,7 +110,7 @@ test("dispatch to two projects: each cook commits and reports done, one notice p
 test("needs_decision wakes with the question; chef_send relaunches run 2 on the same session and the cook commits and reports done", async () => {
   const { kitchen, store } = await setup();
   const brief = [REPORT_STEP("needs_decision", "cookie or bearer token?"), COMMIT_STEP("b.txt"), REPORT_STEP("done", "used cookies")].join("\n");
-  const view = await kitchen.dispatch({ project: "api", title: "Fix login", brief });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Fix login", brief });
   const n1 = await waitNotice(kitchen, view.spec.id);
   assert.deepEqual(n1.outcome, { kind: "needs_decision", question: "cookie or bearer token?" });
   assert.equal(n1.run, 1);
@@ -134,7 +134,7 @@ test("needs_decision wakes with the question; chef_send relaunches run 2 on the 
 test("send to a cook that reported and is still exiting waits for the exit and reports relaunched, not queued behind the cap", async () => {
   const { kitchen, store } = await setup({ cookArgs: ["-e", FAKE_PROVIDER, "-e", SLOW_EXIT] });
   const brief = [REPORT_STEP("needs_decision", "cookie or bearer token?"), REPORT_STEP("done", "used cookies")].join("\n");
-  const view = await kitchen.dispatch({ project: "api", title: "Fix login", brief });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Fix login", brief });
   const n1 = await waitNotice(kitchen, view.spec.id);
   assert.equal(n1.outcome.kind, "needs_decision");
   const oldPid = (await scanCooks()).get(view.spec.sessionId);
@@ -152,7 +152,7 @@ test("send to a cook that reported and is still exiting waits for the exit and r
 test("send gives up waiting for a slow exit after exitWaitMs and reports after-exit, and the tick relaunches once the cook is gone", async () => {
   const { kitchen, store } = await setup({ cookArgs: ["-e", FAKE_PROVIDER, "-e", SLOW_EXIT] }, { exitWaitMs: 200 });
   const brief = [REPORT_STEP("needs_decision", "cookie or bearer token?"), REPORT_STEP("done", "used cookies")].join("\n");
-  const view = await kitchen.dispatch({ project: "api", title: "Fix login", brief });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Fix login", brief });
   await waitNotice(kitchen, view.spec.id);
 
   const delivery = await kitchen.send(view.spec.id, "use cookies");
@@ -165,7 +165,7 @@ test("send gives up waiting for a slow exit after exitWaitMs and reports after-e
 
 test("a message sent while the cook runs is steered into the same run and no second run starts", async () => {
   const { kitchen, store } = await setup();
-  const view = await kitchen.dispatch({ project: "api", title: "Listen", brief: "STEP bash: sleep 4\nSTEP echo-users:" });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Listen", brief: "STEP bash: sleep 4\nSTEP echo-users:" });
   await until("cook is inside bash", async () => {
     const v = await waitState(kitchen, view.spec.id, "cooking", 5000);
     return v.state.kind === "cooking" && v.state.activity.kind === "tool" ? v : undefined;
@@ -187,7 +187,7 @@ const assertCookContract = (prompt: string, title: string) => {
 
 test("the cook's model receives the cook contract, and without the principles add-on no principles", async () => {
   const { kitchen } = await setup();
-  const view = await kitchen.dispatch({ project: "api", title: "Who am I", brief: "STEP echo-system:" });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Who am I", brief: "STEP echo-system:" });
   const notice = await waitNotice(kitchen, view.spec.id);
   assert.equal(notice.outcome.kind, "done");
   const prompt = notice.outcome.kind === "done" ? notice.outcome.summary : "";
@@ -198,7 +198,7 @@ test("the cook's model receives the cook contract, and without the principles ad
 
 test("with the principles add-on the cook's model receives the cook contract and the cook principles, with an index of the vendored files, and none of the chef rules", async () => {
   const { kitchen } = await setup({ cookArgs: ["-e", FAKE_PROVIDER, "-e", PRINCIPLES_ADDON] });
-  const view = await kitchen.dispatch({ project: "api", title: "Principles", brief: "STEP echo-system:" });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Principles", brief: "STEP echo-system:" });
   const notice = await waitNotice(kitchen, view.spec.id);
   const prompt = notice.outcome.kind === "done" ? notice.outcome.summary : "";
   assertCookContract(prompt, "Principles");
@@ -212,7 +212,7 @@ test("a role request in a cook process gets cook", async () => {
   const record = join(tk.home, "roles.txt");
   process.env.ROLE_RECORD = record;
   try {
-    const view = await kitchen.dispatch({ project: "api", title: "Role", brief: REPORT_STEP("done", "asked") });
+    const { view } = await kitchen.dispatch({ project: "api", title: "Role", brief: REPORT_STEP("done", "asked") });
     assert.equal((await waitNotice(kitchen, view.spec.id)).outcome.kind, "done");
   } finally {
     delete process.env.ROLE_RECORD;
@@ -222,7 +222,7 @@ test("a role request in a cook process gets cook", async () => {
 
 test("stop ends a running cook as stopped with no notice, and chef_send resumes it on run 2", async () => {
   const { kitchen, store } = await setup();
-  const view = await kitchen.dispatch({ project: "api", title: "Long", brief: `STEP bash: sleep 60\n${REPORT_STEP("done", "resumed")}` });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Long", brief: `STEP bash: sleep 60\n${REPORT_STEP("done", "resumed")}` });
   await until("cook is inside bash", async () => {
     const v = await waitState(kitchen, view.spec.id, "cooking", 5000);
     return v.state.kind === "cooking" && v.state.activity.kind === "tool" ? v : undefined;
@@ -244,7 +244,7 @@ test("stop ends a running cook as stopped with no notice, and chef_send resumes 
 
 test("a message sent right after a stop is not read by the dying cook and restarts the task on run 2", async () => {
   const { kitchen, store } = await setup();
-  const view = await kitchen.dispatch({ project: "api", title: "Long", brief: `STEP bash: sleep 60\n${REPORT_STEP("done", "resumed")}` });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Long", brief: `STEP bash: sleep 60\n${REPORT_STEP("done", "resumed")}` });
   await until("cook is inside bash", async () => {
     const v = await waitState(kitchen, view.spec.id, "cooking", 5000);
     return v.state.kind === "cooking" && v.state.activity.kind === "tool" ? v : undefined;
@@ -268,7 +268,7 @@ test("a message sent right after a stop is not read by the dying cook and restar
 
 test("close refuses unlanded work, then succeeds after a merge and removes the worktree and branch", async () => {
   const { kitchen, store, repos } = await setup();
-  const view = await kitchen.dispatch({ project: "api", title: "Add c", brief: `${COMMIT_STEP("c.txt")}\n${REPORT_STEP("done", "added c")}` });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Add c", brief: `${COMMIT_STEP("c.txt")}\n${REPORT_STEP("done", "added c")}` });
   await waitNotice(kitchen, view.spec.id);
   await assert.rejects(kitchen.close(view.spec.id, false), (e: unknown) => e instanceof ChefError && /1 commit not on the base branch/.test(e.message));
   assert.ok(existsSync(view.spec.worktree));
@@ -290,7 +290,7 @@ test("close refuses unlanded work, then succeeds after a merge and removes the w
 
 test("close with discard stops a running cook and removes its worktree and branch", async () => {
   const { kitchen, repos } = await setup();
-  const view = await kitchen.dispatch({ project: "api", title: "Drop me", brief: `${COMMIT_STEP("d.txt")}\nSTEP bash: sleep 60` });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Drop me", brief: `${COMMIT_STEP("d.txt")}\nSTEP bash: sleep 60` });
   await until("cook has committed", async () => {
     await kitchen.tick();
     return git(repos.api, "branch", "--list", "chef/api-1") && git(repos.api, "rev-list", "--count", "main..chef/api-1") === "1" ? true : undefined;
@@ -307,7 +307,7 @@ test("close with discard stops a running cook and removes its worktree and branc
 
 test("a new Kitchen adopts a live cook without a second launch and wakes once when it finishes", async () => {
   const { kitchen: first, store } = await setup();
-  const view = await first.dispatch({ project: "api", title: "Slow", brief: `STEP bash: sleep 5\n${REPORT_STEP("done", "slept")}` });
+  const { view } = await first.dispatch({ project: "api", title: "Slow", brief: `STEP bash: sleep 5\n${REPORT_STEP("done", "slept")}` });
   await until("cook is inside bash", async () => {
     const v = await waitState(first, view.spec.id, "cooking", 5000);
     return v.state.kind === "cooking" && v.state.activity.kind === "tool" ? v : undefined;
@@ -331,7 +331,7 @@ test("a new Kitchen adopts a live cook without a second launch and wakes once wh
 
 test("a cook that finished while no owner ran is reported by the next owner's first tick, and the second tick adds nothing", async () => {
   const { kitchen: first, store } = await setup();
-  const view = await first.dispatch({ project: "api", title: "Quick", brief: `${COMMIT_STEP("q.txt")}\n${REPORT_STEP("done", "quick")}` });
+  const { view } = await first.dispatch({ project: "api", title: "Quick", brief: `${COMMIT_STEP("q.txt")}\n${REPORT_STEP("done", "quick")}` });
   first.release();
   await until("cook settles on its own", () => (readFileSync(store.runFile(view.spec.id, runNo(1)), "utf8").includes('"agent_settled"') ? true : undefined));
   await until("cook process exit", async () => ((await scanCooks()).has(view.spec.sessionId) ? undefined : true));
@@ -350,8 +350,8 @@ test("a cook that finished while no owner ran is reported by the next owner's fi
 
 test("maxCooks 1: the second task queues and starts after the first finishes", async () => {
   const { kitchen, store } = await setup({ maxCooks: 1 });
-  const t1 = await kitchen.dispatch({ project: "api", title: "First", brief: `STEP bash: sleep 3\n${REPORT_STEP("done", "first")}` });
-  const t2 = await kitchen.dispatch({ project: "web", title: "Second", brief: REPORT_STEP("done", "second") });
+  const { view: t1 } = await kitchen.dispatch({ project: "api", title: "First", brief: `STEP bash: sleep 3\n${REPORT_STEP("done", "first")}` });
+  const { view: t2 } = await kitchen.dispatch({ project: "web", title: "Second", brief: REPORT_STEP("done", "second") });
   assert.equal(t1.state.kind, "cooking");
   assert.deepEqual(t2.state, { kind: "queued", why: "new" });
   assert.equal(existsSync(store.runFile(t2.spec.id, runNo(1))), false);
@@ -363,8 +363,8 @@ test("maxCooks 1: the second task queues and starts after the first finishes", a
 
 test("a held queued task that chef_send resumes runs to its report and is not stopped when its cook starts", async () => {
   const { kitchen, store } = await setup({ maxCooks: 1 });
-  const t1 = await kitchen.dispatch({ project: "api", title: "First", brief: `STEP bash: sleep 3\n${REPORT_STEP("done", "first")}` });
-  const t2 = await kitchen.dispatch({ project: "web", title: "Second", brief: REPORT_STEP("done", "second") });
+  const { view: t1 } = await kitchen.dispatch({ project: "api", title: "First", brief: `STEP bash: sleep 3\n${REPORT_STEP("done", "first")}` });
+  const { view: t2 } = await kitchen.dispatch({ project: "web", title: "Second", brief: REPORT_STEP("done", "second") });
   assert.deepEqual((await kitchen.stop(t2.spec.id)).view.state, { kind: "idle", run: undefined, since: store.readEvents(t2.spec.id)[0]!.at, outcome: { kind: "stopped" } });
   assert.deepEqual(store.readEvents(t2.spec.id).map((e) => e.type), ["hold"]);
   assert.deepEqual(await kitchen.send(t2.spec.id, "go"), { kind: "queued", position: 1 });
@@ -398,7 +398,7 @@ test("a prompt file without a run file is relaunched from that prompt (interrupt
 
 test("a cook killed with SIGKILL derives failed with the stderr tail", async () => {
   const { kitchen, store } = await setup();
-  const view = await kitchen.dispatch({ project: "api", title: "Doomed", brief: "STEP bash: sleep 60" });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Doomed", brief: "STEP bash: sleep 60" });
   await until("cook is inside bash", async () => {
     const v = await waitState(kitchen, view.spec.id, "cooking", 5000);
     return v.state.kind === "cooking" && v.state.activity.kind === "tool" ? v : undefined;
@@ -413,7 +413,7 @@ test("a cook killed with SIGKILL derives failed with the stderr tail", async () 
 
 test("a cook that exits before its first output line is a failed launch with the stderr tail, not an endless relaunch, and a send retries it with the brief", async () => {
   const { kitchen, store } = await setup({ cookArgs: ["-e", FAKE_PROVIDER, "--model", "nope/none"] });
-  const view = await kitchen.dispatch({ project: "api", title: "Add a", brief: `${COMMIT_STEP("a.txt")}\n${REPORT_STEP("done", "added a.txt")}` });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Add a", brief: `${COMMIT_STEP("a.txt")}\n${REPORT_STEP("done", "added a.txt")}` });
   await until("cook exit", async () => ((await scanCooks()).has(view.spec.sessionId) ? undefined : true));
   const report = await kitchen.tick();
   const state = report.kind === "ok" ? report.board.open[0]!.state : undefined;
@@ -439,7 +439,7 @@ test("a cook that exits before its first output line is a failed launch with the
 test("a dispatch whose worktree cannot be created fails at once with the git error and is not retried every tick", async () => {
   const { kitchen, store } = await setup();
   writeFileSync(store.worktreeDir("api-1" as TaskId), "a file where the worktree should go");
-  const view = await kitchen.dispatch({ project: "api", title: "Doomed", brief: "STEP say: hi" });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Doomed", brief: "STEP say: hi" });
   assert.equal(view.state.kind, "idle");
   assert.match(view.state.kind === "idle" && view.state.outcome.kind === "failed" ? view.state.outcome.reason : "", /not a directory/);
   const notice = await waitNotice(kitchen, view.spec.id, 5000);
@@ -457,7 +457,7 @@ test("addProject refuses a base branch that does not exist or starts with a dash
   assert.deepEqual(store.loadProjects().projects.map((p) => p.name), ["api", "web"]);
   await assert.rejects(kitchen.dispatch({ project: "api", title: "x", brief: "y", model: "  " }), (e: unknown) => e instanceof ChefError && /model/.test(e.message));
   assert.deepEqual(store.listTaskIds(), []);
-  const padded = await kitchen.dispatch({ project: "api", title: "m", brief: REPORT_STEP("done", "m"), model: ` ${FAKE_MODEL} ` });
+  const { view: padded } = await kitchen.dispatch({ project: "api", title: "m", brief: REPORT_STEP("done", "m"), model: ` ${FAKE_MODEL} ` });
   assert.deepEqual(store.readSpec(padded.spec.id).models, [{ model: FAKE_MODEL }], "the explicit model leads, and the default list adds no duplicate");
   git(repos.api, "branch", "release");
   const p = await kitchen.addProject({ path: repos.api, name: "rel", baseBranch: "release" });
@@ -481,7 +481,7 @@ test("a broken task.json or config.json does not stop the tick: the broken task 
   assert.match(report.errors[0]!, /config\.json.*maxCooks/);
 
   writeFileSync(join(tk.kitchenDir, "config.json"), goodConfig);
-  const view = await kitchen.dispatch({ project: "api", title: "Healthy", brief: REPORT_STEP("done", "ok") });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Healthy", brief: REPORT_STEP("done", "ok") });
   assert.equal(view.state.kind, "cooking");
   const notice = await waitNotice(kitchen, view.spec.id);
   assert.deepEqual(notice.outcome, { kind: "done", summary: "ok", reported: true });
@@ -494,7 +494,7 @@ test("a broken task.json or config.json does not stop the tick: the broken task 
 test("a cook that never exits after its report is signalled and killed by the tick, and the task can be sent to again", async () => {
   const { kitchen, store } = await setup({ cookArgs: ["-e", FAKE_PROVIDER, "-e", NEVER_EXIT] }, { exitGraceMs: 500, killGraceMs: 1000 });
   const brief = [REPORT_STEP("needs_decision", "cookie or bearer token?"), REPORT_STEP("done", "used cookies")].join("\n");
-  const view = await kitchen.dispatch({ project: "api", title: "Stuck", brief });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Stuck", brief });
   const n1 = await waitNotice(kitchen, view.spec.id);
   assert.equal(n1.outcome.kind, "needs_decision");
   const pid = (await scanCooks()).get(view.spec.sessionId);
@@ -604,7 +604,7 @@ test("a stale lease from a dead pid or a reused pid is replaced", async () => {
 
 test("after a takeover the old owner's send, stop, dispatch, and addProject are refused before they write anything", async () => {
   const { kitchen, store, repos } = await setup();
-  const view = await kitchen.dispatch({ project: "api", title: "Long", brief: "STEP bash: sleep 60" });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Long", brief: "STEP bash: sleep 60" });
   await openOwner("chef-other", true);
   await assert.rejects(kitchen.send(view.spec.id, "x"), /takeover/);
   assert.deepEqual(store.pendingMessages(view.spec.id), []);
