@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -41,7 +41,8 @@ test("inspectRepo returns the root from inside a subdirectory and the current br
   await withRepo(async (_dir, repo) => {
     mkdirSync(join(repo, "sub"));
     const info = await inspectRepo(join(repo, "sub"));
-    assert.equal(info.root, repo);
+    // git reports the resolved toplevel and the product stores it. On macOS the temp dir is under a symlink.
+    assert.equal(info.root, realpathSync(repo));
     assert.equal(info.baseBranch, "main");
     await assert.rejects(inspectRepo(join(repo, "missing")), ChefError);
   });
