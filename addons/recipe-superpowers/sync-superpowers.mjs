@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Vendors the chosen superpowers skills into addons/superpowers-principles/principles/.
-// Usage: node addons/superpowers-principles/sync-superpowers.mjs <obra/superpowers checkout> [out dir]
+// Vendors the chosen superpowers skills into addons/recipe-superpowers/principles/.
+// Usage: node addons/recipe-superpowers/sync-superpowers.mjs <obra/superpowers checkout> [out dir]
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -22,7 +22,7 @@ const SKILLS = [
 
 const [checkout, outArg] = process.argv.slice(2);
 if (!checkout) {
-  console.error("Usage: node addons/superpowers-principles/sync-superpowers.mjs <obra/superpowers checkout> [out dir]");
+  console.error("Usage: node addons/recipe-superpowers/sync-superpowers.mjs <obra/superpowers checkout> [out dir]");
   process.exit(2);
 }
 const out = resolve(outArg ?? join(import.meta.dirname, "principles"));
@@ -55,7 +55,7 @@ writeFileSync(
     `Date: ${date}`,
     `Skills: ${SKILLS.join(", ")}`,
     "",
-    "Do not edit these files by hand; rerun addons/superpowers-principles/sync-superpowers.mjs with an obra/superpowers checkout.",
+    "Do not edit these files by hand; rerun addons/recipe-superpowers/sync-superpowers.mjs with an obra/superpowers checkout.",
     "",
   ].join("\n"),
 );

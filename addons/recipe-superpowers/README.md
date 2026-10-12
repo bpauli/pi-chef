@@ -1,8 +1,8 @@
-# pi-chef-superpowers-principles
+# pi-chef-recipe-superpowers
 
-An optional principle set for [pi-chef](../../README.md), with the name `superpowers`. With it, the chef and every cook work by the skills of [superpowers](https://github.com/obra/superpowers) by Jesse Vincent. The add-on vendors 10 of the 15 superpowers skills into `principles/`, each skill directory as upstream has it, under the MIT license of superpowers (`principles/LICENSE`, Copyright (c) 2025 Jesse Vincent). `principles/SOURCE.md` names the upstream commit.
+An optional recipe for [pi-chef](../../README.md), with the name `superpowers`. With it, the chef and every cook work by the skills of [superpowers](https://github.com/obra/superpowers) by Jesse Vincent. The add-on vendors 10 of the 15 superpowers skills into `principles/`, each skill directory as upstream has it, under the MIT license of superpowers (`principles/LICENSE`, Copyright (c) 2025 Jesse Vincent). `principles/SOURCE.md` names the upstream commit.
 
-The add-on adds a block with the heading `# Principles: superpowers` to the system prompt of two roles:
+The add-on adds a block with the heading `# Recipe: superpowers` to the system prompt of two roles:
 
 - A cook gets the implementation skills, for example "write the failing test first and watch it fail" and "find the root cause before you change code". The block follows the cook contract. Where a skill tells the agent to ask its human partner, the block tells the cook to decide a reversible choice itself or to report `needs_decision`, because no human watches a cook.
 - The chef gets the planning and orchestration skills, for example "find out what the human wants before you dispatch" and "a cook's done report is not proof". For the chef, a `chef_dispatch` with a complete brief is the subagent dispatch of the skills. The chef gets the block only while chef mode is on.
@@ -11,7 +11,7 @@ Each block has the always-on rules of its role, and an index of the skills of th
 
 ## Chosen skills
 
-The chef and the cook contract decide what fits. A cook never waits for a human, the chef owns the worktrees and the landing of branches, and a meta skill about the skill system is not a working principle.
+The chef and the cook contract decide what fits. A cook never waits for a human, the chef owns the worktrees and the landing of branches, and a meta skill about the skill system is not a working rule.
 
 | Skill | Role | Why |
 |---|---|---|
@@ -25,11 +25,11 @@ The chef and the cook contract decide what fits. A cook never waits for a human,
 | test-driven-development | cook | A cook writes the failing test first. |
 | verification-before-completion | chef, cook | A cook verifies before it reports `done`. The chef does not trust a done report without the evidence. |
 | writing-plans | chef | The chef writes the plan, then dispatches its tasks. The plan goes into the reply or a brief, not into a project checkout. |
-| diagnosing-superpowers | none | A meta skill that debugs superpowers sessions. It is not a working principle. |
+| diagnosing-superpowers | none | A meta skill that debugs superpowers sessions. It is not a working rule. |
 | finishing-a-development-branch | none | It merges, pushes, or discards the branch and asks the human which. In pi-chef the brief sets the delivery, and `chef_close` removes the worktree. |
 | using-git-worktrees | none | The chef creates the worktree of each task. A cook works only in its own worktree. |
 | using-superpowers | none | A meta skill that tells the agent how to find and load superpowers skills in its harness. The block replaces it. |
-| writing-skills | none | A meta skill for the authors of skills. It is not a working principle. |
+| writing-skills | none | A meta skill for the authors of skills. It is not a working rule. |
 
 executing-plans, subagent-driven-development, writing-plans, and `test-driven-development/writing-good-tests.md` link to skills that are not vendored (using-git-worktrees, finishing-a-development-branch, using-superpowers). The links stay as upstream wrote them. The rules in the block tell the model to skip those steps.
 
@@ -40,23 +40,23 @@ The add-on duplicates the small loader and block builder of the pstack add-on in
 Install pi-chef first. Then install this directory as a local package:
 
 ```sh
-pi install <path to pi-chef>/addons/superpowers-principles
+pi install <path to pi-chef>/addons/recipe-superpowers
 ```
 
-Pi git sources take no subdirectory, so use the local path. When you installed pi-chef from git, the checkout is under your Pi agent directory, for example `~/.pi/agent/git/github.com/bpauli/pi-chef/addons/superpowers-principles`.
+Pi git sources take no subdirectory, so use the local path. When you installed pi-chef from git, the checkout is under your Pi agent directory, for example `~/.pi/agent/git/github.com/bpauli/pi-chef/addons/recipe-superpowers`.
 
-Cooks load your installed Pi packages, so each cook also loads this add-on. When you also installed another set, select one in the kitchen `config.json`, for example `"principles": "superpowers"`, or per project with `"principles": { "default": "pstack", "projects": { "obsync": "superpowers" } }`. Without a selection, every installed set adds its block.
+Cooks load your installed Pi packages, so each cook also loads this add-on. When you also installed another recipe, select one in the kitchen `config.json`, for example `"recipe": "superpowers"`, or per project with `"recipe": { "default": "pstack", "projects": { "obsync": "superpowers" } }`. Without a selection, every installed recipe adds its block.
 
 ## How it works
 
-At the start of each turn, the add-on asks pi-chef for the role of its Pi process with the role query on `pi.events` (`pi-chef:role:v1`, see `docs/design.md`, "Integration events"). For `chef` or `cook` it appends that role's block to the system prompt, unless the answer selects another set or `none`. For no role it adds nothing. It answers the set discovery event (`pi-chef:principle-sets:v1`) with `superpowers`.
+At the start of each turn, the add-on asks pi-chef for the role of its Pi process with the role query on `pi.events` (`pi-chef:role:v1`, see `docs/design.md`, "Integration events"). For `chef` or `cook` it appends that role's block to the system prompt, unless the answer selects another recipe or `none`. For no role it adds nothing. It answers the recipe discovery event (`pi-chef:recipes:v1`) with `superpowers`.
 
 ## Update the vendored skills
 
 Clone [obra/superpowers](https://github.com/obra/superpowers). Then, from the pi-chef checkout, run:
 
 ```sh
-node addons/superpowers-principles/sync-superpowers.mjs <path to the superpowers checkout>
+node addons/recipe-superpowers/sync-superpowers.mjs <path to the superpowers checkout>
 ```
 
 The script replaces the vendored skills with the chosen skills, copies the license, and writes `principles/SOURCE.md`. A second run changes nothing. It refuses a checkout that lacks a chosen skill. To change the choice, edit the list in the script, the role lists in `superpowers.ts`, and the table above together; a test fails when the script and the role lists differ. Do not edit the files in `principles/` by hand.

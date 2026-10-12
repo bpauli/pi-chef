@@ -84,7 +84,7 @@ One writer per file. No file is shared by two writers.
 
 | File under the kitchen | Writer | Meaning |
 |---|---|---|
-| `config.json` | the human | Optional. `maxCooks` (default 3), `models` (see "Cook models"), `cookArgs` (extra pi args for every cook), `principles` (see "Principle sets"). The chef and the cooks only read it. |
+| `config.json` | the human | Optional. `maxCooks` (default 3), `models` (see "Cook models"), `cookArgs` (extra pi args for every cook), `recipe` (see "Recipes"). The chef and the cooks only read it. |
 | `pass.lock` | the lease holder | `{pid, pidStart, sessionId, since}`. |
 | `projects/<name>.json` | owner, once | Project spec: name, path, base branch, branch prefix, note. A file without `branchPrefix` uses `issue/`. |
 | `tasks/<id>/task.json` | owner, once (O_EXCL) | Immutable task spec: project, title, brief, branch (`<branchPrefix><id>` at dispatch), worktree, base branch, session id, the candidate models, and the model rule. |
@@ -272,38 +272,38 @@ const ROLE_EVENT = "pi-chef:role:v1";
 interface RoleRequest {
   version: 1;
   role?: "chef" | "cook"; // the asker leaves it unset; chef fills it
-  principleSet?: string;  // chef fills it with the role: a set name or "none"; unset is no selection
+  recipe?: string;  // chef fills it with the role: a recipe name or "none"; unset is no selection
 }
 ```
 
-The asker emits a new request and reads `role` and `principleSet` when `emit` returns. Pi 1.0.3 runs the listeners of `pi.events` synchronously: `emit` calls `EventEmitter.emit` (`dist/core/event-bus.js:5-6`), and each listener is an async wrapper that calls the handler before its first `await` (`dist/core/event-bus.js:9-11`). A listener that sets `role` without an `await` has set it before `emit` returns.
+The asker emits a new request and reads `role` and `recipe` when `emit` returns. Pi 1.0.3 runs the listeners of `pi.events` synchronously: `emit` calls `EventEmitter.emit` (`dist/core/event-bus.js:5-6`), and each listener is an async wrapper that calls the handler before its first `await` (`dist/core/event-bus.js:9-11`). A listener that sets `role` without an `await` has set it before `emit` returns.
 
-| Process | `role` | `principleSet` | Answered by |
+| Process | `role` | `recipe` | Answered by |
 |---|---|---|---|
-| cook | `cook` | `principles.projects[<task's project>]`, else `principles.default` | `cook.ts`, from its own install. It cannot read `CHEF_ROLE`, because the cook role deletes it from `process.env` at load. |
-| chef session, while chef mode is on (owner or read-only) | `chef` | `principles.default` | `chef.ts`, while the session has the kitchen open |
+| cook | `cook` | `recipe.projects[<task's project>]`, else `recipe.default` | `cook.ts`, from its own install. It cannot read `CHEF_ROLE`, because the cook role deletes it from `process.env` at load. |
+| chef session, while chef mode is on (owner or read-only) | `chef` | `recipe.default` | `chef.ts`, while the session has the kitchen open |
 | normal Pi session, chef mode off, or chef not installed | unset | unset | nobody |
 
-`principleSet` is unset when `config.json` selects nothing for the role. `principleSet` (pure, `derive.ts`) resolves it from the normalized config. Chef reads `config.json` through `Store.loadConfig` at each request, so an edit applies at the next question. A cook reads the same file: it keeps the task directory from `CHEF_TASK_DIR` before it deletes the variable, and the kitchen is two levels up (`kitchenOfTaskDir` in `store.ts`). A cook only reads the config, so it still writes no chef file. A config with an error line answers no `principleSet`, as with the other defaults.
+`recipe` is unset when `config.json` selects nothing for the role. `recipeFor` (pure, `derive.ts`) resolves it from the normalized config. Chef reads `config.json` through `Store.loadConfig` at each request, so an edit applies at the next question. A cook reads the same file: it keeps the task directory from `CHEF_TASK_DIR` before it deletes the variable, and the kitchen is two levels up (`kitchenOfTaskDir` in `store.ts`). A cook only reads the config, so it still writes no chef file. A config with an error line answers no `recipe`, as with the other defaults.
 
 Chef checks the request with typebox and changes nothing else. The answer is the state at the moment of the question, so an asker asks again each time it needs the role, for example at each turn. Then extension load order does not matter, and `/chef`, `/chef off`, or a config edit changes the next answer.
 
-`principleSet` is an additive change to v1. An older add-on that does not read it still gets `role` and adds its block as before.
+`recipe` is an additive change to v1. An older add-on that does not read it still gets `role` and adds its block as before.
 
-### Principle set discovery
+### Recipe discovery
 
-Chef asks which principle sets are installed with a second synchronous request:
+Chef asks which recipes are installed with a second synchronous request:
 
 ```ts
-const PRINCIPLE_SETS_EVENT = "pi-chef:principle-sets:v1";
+const RECIPES_EVENT = "pi-chef:recipes:v1";
 
-interface PrincipleSetsRequest {
+interface RecipesRequest {
   version: 1;
-  sets: string[]; // chef sends it empty; each set add-on pushes its name
+  recipes: string[]; // chef sends it empty; each recipe add-on pushes its name
 }
 ```
 
-A set add-on checks the request with typebox and pushes its name. Chef asks at each owner tick and for each board text. Each selected set (other than `none`) that no add-on pushed is an error line: `config.json selects the principle set "<name>", but no installed add-on provides it. Installed sets: <names>.` (`missingSets` in `derive.ts`). The line follows the rules of the other tick errors, so the human sees it once while it lasts. `chef_board` and `/chef board` show the selection under the projects, for example `Principle set: pstack. Per project: api none.` (`principlesText` in `derive.ts`).
+A recipe add-on checks the request with typebox and pushes its name. Chef asks at each owner tick and for each board text. Each selected recipe (other than `none`) that no add-on pushed is an error line: `config.json selects the recipe "<name>", but no installed add-on provides it. Installed sets: <names>.` (`missingRecipes` in `derive.ts`). The line follows the rules of the other tick errors, so the human sees it once while it lasts. `chef_board` and `/chef board` show the selection under the projects, for example `Recipe: pstack. Per project: api none.` (`recipeText` in `derive.ts`).
 
 ## The viewer
 
@@ -343,49 +343,51 @@ The external-run API has no state for "needs the human". FleetView draws `stoppe
 
 The add-on keeps the display fields it last wrote per task and writes only when they change. An update sends every display field, with `undefined` for one that went away, so an old preview never stays. A task that leaves the snapshot, every task on `role: "off"`, and every task on `session_shutdown` are unregistered. A register that fails because an earlier copy of the add-on left the job (for example across `/reload`) becomes an update.
 
-## Principle sets
+## Recipes
 
-A principle set is a named group of working rules that the user chooses for the chef and the cooks. Each set is an optional add-on package with a set name that matches `[a-z0-9-]+`. Core has no principle set. Without an add-on, no prompt gets principles. pstack (`addons/pstack-principles/`) is the first set, superpowers (`addons/superpowers-principles/`) the second. Another set is a new add-on that follows this contract:
+A recipe is a named group of working rules that the user chooses for the chef and the cooks. Each recipe is an optional add-on package with a recipe name that matches `[a-z0-9-]+`. Core has no recipe. Without an add-on, no prompt gets a recipe block. pstack (`addons/recipe-pstack/`) is the first set, superpowers (`addons/recipe-superpowers/`) the second. Another recipe is a new add-on that follows this contract:
 
 - In `before_agent_start`, ask the role with the role query `pi-chef:role:v1` (see "Role query"). Ask at each turn, so that `/chef`, `/chef off`, and a config edit change the next turn.
-- Add a block only when a role is answered and `principleSet` is unset or equals the set name. `none` or another set name means: add nothing.
-- For `chef`, `cook`, or both, append one block to `event.systemPrompt`. A set can give a block to one role only.
-- Start the block with the heading `# Principles: <set name>`, for example `# Principles: pstack`. The chef skill looks for this heading.
-- Answer the discovery request `pi-chef:principle-sets:v1` (see "Principle set discovery") by pushing the set name.
+- Add a block only when a role is answered and `recipe` is unset or equals the recipe name. `none` or another recipe name means: add nothing.
+- For `chef`, `cook`, or both, append one block to `event.systemPrompt`. A recipe can give a block to one role only.
+- Start the block with the heading `# Recipe: <recipe name>`, for example `# Recipe: pstack`. The chef skill looks for this heading.
+- Answer the discovery request `pi-chef:recipes:v1` (see "Recipe discovery") by pushing the recipe name.
 
 ### Selection
 
-The human selects the set in `config.json`:
+The human selects the recipe in `config.json`:
 
 ```ts
-config.principles?: SetName | { default?: SetName; projects?: Record<ProjectName, SetName> };
-// SetName: a set name or "none", matching [a-z0-9-]+
+config.recipe?: RecipeName | { default?: RecipeName; projects?: Record<ProjectName, RecipeName> };
+// RecipeName: a recipe name or "none", matching [a-z0-9-]+
 ```
 
 The string form is short for `{ default }`. `loadConfig` normalizes it to `{ default: string | undefined; projects: Map<string, string> }`. A `Map` and not an object, so a project named like an object property (`constructor`) gets no inherited value. A bad name, another type, or an unknown key is a config error line, and the kitchen uses the defaults (no selection).
 
-| Role | Set |
+`recipe` had the name `principles` before. `loadConfig` still reads a file with only `principles`: it loads the value as `recipe` and gives one config error line that tells the human to rename the field. A file with both fields is a config error line, and the kitchen uses the defaults.
+
+| Role | Recipe |
 |---|---|
 | chef | `default` |
 | cook of project `p` | `projects[p]`, else `default` |
 
-When the result is unset, there is no selection, and every installed set adds its block. This keeps a setup with one installed set and no `principles` field working as before. With two sets and no selection, the model gets both blocks. Core does not stop this.
+When the result is unset, there is no selection, and every installed recipe adds its block. This keeps a setup with one installed recipe and no `recipe` field working as before. With two recipes and no selection, the model gets both blocks. Core does not stop this.
 
 Selection is resolved live, at each role query, not frozen at dispatch: it is a choice about how a role works, not a fact of the task. A config edit applies at the next turn of the chef and at the next run of a cook.
 
-## Add-on: pstack principles
+## Add-on: pstack recipe
 
-`addons/pstack-principles/` is the package `pi-chef-pstack-principles`, the principle set of pstack. With it, the chef and every cook work by the pstack principles. Its block heading is `# Principles: pstack`, and its frame says that the user chose the pstack principles. Cooks run without `-ne`, so a cook loads the human's installed Pi packages, and an installed add-on also loads in each cook.
+`addons/recipe-pstack/` is the package `pi-chef-recipe-pstack`, the recipe of pstack. With it, the chef and every cook work by the pstack principles. Its block heading is `# Recipe: pstack`, and its frame says that the user chose the pstack principles. Cooks run without `-ne`, so a cook loads the human's installed Pi packages, and an installed add-on also loads in each cook.
 
-`addons/pstack-principles/principles/<name>/SKILL.md` holds the 24 pstack principle skills, vendored by `addons/pstack-principles/sync-pstack.mjs` (MIT, `principles/LICENSE`, upstream commit in `principles/SOURCE.md`). These files are the single source. `loadPrinciples` parses `name` and `description` from each frontmatter with typebox, and a file without them is a load error. `principlesBlock(role, principles)` is pure. It returns the heading, a frame, the always-on rules of that role (`PSTACK_RULES` in `addons/pstack-principles/principles.ts`, each rule names its principles), and an index derived from the files: one line per principle with its name, its description, and its absolute path. The block ends with "Before you apply a principle, read its file in full."
+`addons/recipe-pstack/principles/<name>/SKILL.md` holds the 24 pstack principle skills, vendored by `addons/recipe-pstack/sync-pstack.mjs` (MIT, `principles/LICENSE`, upstream commit in `principles/SOURCE.md`). These files are the single source. `loadPrinciples` parses `name` and `description` from each frontmatter with typebox, and a file without them is a load error. `principlesBlock(role, principles)` is pure. It returns the heading, a frame, the always-on rules of that role (`PSTACK_RULES` in `addons/recipe-pstack/principles.ts`, each rule names its principles), and an index derived from the files: one line per principle with its name, its description, and its absolute path. The block ends with "Before you apply a principle, read its file in full."
 
-The add-on loads the principles once, when it installs. Its set name is `pstack`. In `before_agent_start` it sends a role query and appends the block of the answered role to `event.systemPrompt`:
+The add-on loads the principles once, when it installs. Its recipe name is `pstack`. In `before_agent_start` it sends a role query and appends the block of the answered role to `event.systemPrompt`:
 
 | Role answer | Block |
 |---|---|
-| `cook`, `principleSet` unset or `pstack` | cook rules and the index, after the cook contract that `cook.ts` appended |
-| `chef`, `principleSet` unset or `pstack` | chef rules and the index |
-| a role with `principleSet` `none` or another set | none |
+| `cook`, `recipe` unset or `pstack` | cook rules and the index, after the cook contract that `cook.ts` appended |
+| `chef`, `recipe` unset or `pstack` | chef rules and the index |
+| a role with `recipe` `none` or another recipe | none |
 | no role (normal Pi session, chef mode off, chef not installed) | none |
 
 Pi passes each `before_agent_start` handler the system prompt with the changes of the handlers before it (`dist/core/extensions/runner.js:1137-1148`), so the cook contract and the block both reach the model. The add-on asks at each turn, so `/chef` and `/chef off` mid-session change the next turn's prompt, and the load order of chef and the add-on does not matter.
@@ -397,11 +399,11 @@ Two other deliveries were rejected:
 
 `principle-explain-the-number` links to `../benchmark-checklist/`, which is not vendored. The link stays as upstream wrote it.
 
-## Add-on: superpowers principles
+## Add-on: superpowers recipe
 
-`addons/superpowers-principles/` is the package `pi-chef-superpowers-principles`, the principle set `superpowers` from [obra/superpowers](https://github.com/obra/superpowers) by Jesse Vincent. Its block heading is `# Principles: superpowers`, and its frame says that the user chose the superpowers set. It follows the contract in "Principle sets" in the same way as the pstack add-on: a role query at each turn, the selection check, the discovery answer, and the block after the cook contract.
+`addons/recipe-superpowers/` is the package `pi-chef-recipe-superpowers`, the recipe `superpowers` from [obra/superpowers](https://github.com/obra/superpowers) by Jesse Vincent. Its block heading is `# Recipe: superpowers`, and its frame says that the user chose the superpowers recipe. It follows the contract in "Recipes" in the same way as the pstack add-on: a role query at each turn, the selection check, the discovery answer, and the block after the cook contract.
 
-Superpowers is written for one agent and its human partner. A cook has no human, and the chef owns worktrees and the landing of branches. So the add-on vendors 10 of the 15 skills, and splits them per role. `addons/superpowers-principles/README.md` gives the reason for each skill in or out.
+Superpowers is written for one agent and its human partner. A cook has no human, and the chef owns worktrees and the landing of branches. So the add-on vendors 10 of the 15 skills, and splits them per role. `addons/recipe-superpowers/README.md` gives the reason for each skill in or out.
 
 | Role | Skills in the index |
 |---|---|
@@ -409,11 +411,11 @@ Superpowers is written for one agent and its human partner. A cook has no human,
 | cook | executing-plans, receiving-code-review, systematic-debugging, test-driven-development, verification-before-completion |
 | none | diagnosing-superpowers, finishing-a-development-branch, using-git-worktrees, using-superpowers, writing-skills |
 
-`addons/superpowers-principles/principles/<skill>/` holds each chosen skill directory as upstream has it, with its companion files, vendored by `sync-superpowers.mjs` (MIT, `principles/LICENSE`, upstream commit in `principles/SOURCE.md`). The script holds the chosen list. It deletes every vendored skill directory and copies the chosen ones again, so a second run changes nothing and a skill that is no longer chosen goes away. It refuses a checkout that lacks a chosen skill. `tsconfig.json` excludes `addons/*/principles`, because upstream ships an example `.ts` file that does not compile here.
+`addons/recipe-superpowers/principles/<skill>/` holds each chosen skill directory as upstream has it, with its companion files, vendored by `sync-superpowers.mjs` (MIT, `principles/LICENSE`, upstream commit in `principles/SOURCE.md`). The script holds the chosen list. It deletes every vendored skill directory and copies the chosen ones again, so a second run changes nothing and a skill that is no longer chosen goes away. It refuses a checkout that lacks a chosen skill. `tsconfig.json` excludes `addons/*/principles`, because upstream ships an example `.ts` file that does not compile here.
 
 `superpowers.ts` is pure apart from `loadSkills`, which parses `name` and `description` of each vendored `SKILL.md` with typebox. `SUPERPOWERS_SKILLS` names the skills of each role's index, and `SUPERPOWERS_RULES` the always-on rules of each role, each with the skills it comes from. The frame adapts the skills to the kitchen. A cook decides a reversible choice itself or reports `needs_decision` where a skill says to ask the human partner. For the chef, the human partner is the human, a `chef_dispatch` with a complete brief is a subagent dispatch, and the steps that use the skills that are not vendored are skipped. `superpowersBlock(role, skills)` returns the heading, the frame, the rules, the index of the role's skills (name, description, absolute path), and "Before you apply a skill, read its file in full."
 
-The add-on imports no runtime code from `extension/` or from the pstack add-on. It duplicates the small loader and block builder, so that each set installs alone.
+The add-on imports no runtime code from `extension/` or from the pstack add-on. It duplicates the small loader and block builder, so that each recipe installs alone.
 
 Some vendored skills link to skills that are not vendored (using-git-worktrees, finishing-a-development-branch, using-superpowers). The links stay as upstream wrote them, and the rules tell the model to skip those steps. The upstream description of executing-plans contains an em dash. The index shows it as upstream wrote it.
 
@@ -432,7 +434,7 @@ About 3k lines of source. Any flow passes through at most three files: tool, the
 | `kitchen.ts` | The deep module: the seven operations plus `tick`. It imports no Pi types. |
 | `chef.ts` | The Pi shell: tools as one-call adapters, `/chef`, the widget, the `Waker`, the cooks snapshot emission, activation. |
 | `cook.ts` | The cook half. |
-| `events.ts` | The integration contract: the cooks snapshot types, the role query, the principle set discovery, the event names, and the pure builder. No Pi types. |
+| `events.ts` | The integration contract: the cooks snapshot types, the role query, the recipe discovery, the event names, and the pure builder. No Pi types. |
 | `watch.ts` | The viewer of a task's run files, under plain Node. Node builtins only. |
 
 The add-ons live outside `extension/` and import no runtime code from it:
@@ -443,12 +445,12 @@ The add-ons live outside `extension/` and import no runtime code from it:
 | `addons/herdr/herdr.ts` | The only herdr caller: list, open, and report cook tabs, and the in-memory `CookTabs` record. |
 | `addons/subagents/index.ts` | The `pi-chef-subagents` entry: the snapshot listener, the FleetView session identity, the notifications. |
 | `addons/subagents/fleet.ts` | Finds and loads `pi-subagents/external-runs`, maps a task to its job, and keeps the jobs this add-on wrote (`FleetRecords`). |
-| `addons/pstack-principles/index.ts` | The `pi-chef-pstack-principles` entry: the role query at each turn, the selection check, the discovery answer, and the block in the system prompt. |
-| `addons/pstack-principles/principles.ts` | Loads the vendored pstack principles and builds the block for each role. |
-| `addons/pstack-principles/sync-pstack.mjs` | Vendors the pstack principles from a cursor/plugins checkout. |
-| `addons/superpowers-principles/index.ts` | The `pi-chef-superpowers-principles` entry: the role query at each turn, the selection check, the discovery answer, and the block in the system prompt. |
-| `addons/superpowers-principles/superpowers.ts` | Loads the vendored superpowers skills, the role split, the rules, and the block for each role. |
-| `addons/superpowers-principles/sync-superpowers.mjs` | Vendors the chosen superpowers skills from an obra/superpowers checkout. |
+| `addons/recipe-pstack/index.ts` | The `pi-chef-recipe-pstack` entry: the role query at each turn, the selection check, the discovery answer, and the block in the system prompt. |
+| `addons/recipe-pstack/principles.ts` | Loads the vendored pstack principles and builds the block for each role. |
+| `addons/recipe-pstack/sync-pstack.mjs` | Vendors the pstack principles from a cursor/plugins checkout. |
+| `addons/recipe-superpowers/index.ts` | The `pi-chef-recipe-superpowers` entry: the role query at each turn, the selection check, the discovery answer, and the block in the system prompt. |
+| `addons/recipe-superpowers/superpowers.ts` | Loads the vendored superpowers skills, the role split, the rules, and the block for each role. |
+| `addons/recipe-superpowers/sync-superpowers.mjs` | Vendors the chosen superpowers skills from an obra/superpowers checkout. |
 
 Every file line and run-file line is checked with `Value.Check` before a field is read. A bad line is skipped and counted, never a crash of the tick. The tick reads the kitchen through one `Store.snapshot`, each file in isolation: a task whose `task.json` does not parse is listed on the board as `broken` with the reason, a bad `config.json` yields the defaults plus an error line, a bad project file is skipped plus an error line. The shell shows an error when it starts and again only after it went away and came back. `task.json` is written through tmp plus rename inside the task directory, whose `mkdir` is the exclusive step.
 
@@ -503,7 +505,7 @@ PR creation or merge automation (a brief can tell the cook to run `gh`), per-pro
 
 ## Test plan
 
-- Unit (`node --test`, no Pi): run-file fold over recorded Pi streams, `deriveTask` per state (including launch failures and the same-millisecond stop), `plan` (cap, interrupted launch and the reclaim threshold, stop escalation, the stuck settled cook, closed with worktree), close verdict, wake batching with the in-flight set, board text, result text truncation, the close refusal names the stored branch, a project file without `branchPrefix` loads with `issue/`, the LF-only reader with split UTF-8 input, the cook poller gate against a fake extension API, the model selection (a rule's models then the default list, one entry per model, an explicit model first, an unknown rule refused, unavailable models dropped with their reasons, and a refusal when none is left), the chef's models section, the config models (rules, a single profile as a list of one, the old `model` and `thinking` shorthand, and duplicate rule names, a bad thinking level, and old and new fields together as error lines), the config principles (the string form, the object form, `none`, and a bad name, another type, or an unknown key as error lines), the principle set resolution (the chef gets the default, a cook its project's set or else the default, a project named `constructor` the default, nothing selected is unset), the missing-set error lines and the board line, a `task.json` from before candidates, the run's model from the run file, and the model fallback (a provider failure on candidate 1 plans run 2 on candidate 2 with the fallback prompt and no notice, later runs stay on that candidate, a crash, a failed report, or a stopped run does not fall back, the last candidate's provider failure notifies with every model tried, the notice after a fallback names it, an interrupted fallback launch relaunches the same run on the same candidate, and a launch failure uses up no candidate).
+- Unit (`node --test`, no Pi): run-file fold over recorded Pi streams, `deriveTask` per state (including launch failures and the same-millisecond stop), `plan` (cap, interrupted launch and the reclaim threshold, stop escalation, the stuck settled cook, closed with worktree), close verdict, wake batching with the in-flight set, board text, result text truncation, the close refusal names the stored branch, a project file without `branchPrefix` loads with `issue/`, the LF-only reader with split UTF-8 input, the cook poller gate against a fake extension API, the model selection (a rule's models then the default list, one entry per model, an explicit model first, an unknown rule refused, unavailable models dropped with their reasons, and a refusal when none is left), the chef's models section, the config models (rules, a single profile as a list of one, the old `model` and `thinking` shorthand, and duplicate rule names, a bad thinking level, and old and new fields together as error lines), the config recipe (the string form, the object form, `none`, and a bad name, another type, or an unknown key as error lines), the recipe resolution (the chef gets the default, a cook its project's recipe or else the default, a project named `constructor` the default, nothing selected is unset), the missing-recipe error lines and the board line, a `task.json` from before candidates, the run's model from the run file, and the model fallback (a provider failure on candidate 1 plans run 2 on candidate 2 with the fallback prompt and no notice, later runs stay on that candidate, a crash, a failed report, or a stopped run does not fall back, the last candidate's provider failure notifies with every model tried, the notice after a fallback names it, an interrupted fallback launch relaunches the same run on the same candidate, and a launch failure uses up no candidate).
 - Git (real temp repos): ensure worktree twice, landed by base and by remote branch, dirty refusal, a stale remote-tracking ref never deletes the branch, a detached HEAD is off the branch.
 - Kitchen e2e (real cook Pi processes, fake model, temp `PI_CODING_AGENT_DIR` and `CHEF_HOME`): dispatch to two projects; a cook reports `needs_decision`; `send` relaunches and the cook commits and reports `done`; a message sent mid-run is steered; stop, and send right after a stop; close refuses then succeeds; a branch prefix that gives an invalid task branch is refused; a project without a branch prefix dispatches on `issue/<id>` and one with `feat/` on `feat/<id>`; a task stored on `chef/<id>` closes and deletes that branch once landed; a new `Kitchen` instance adopts a live cook and derives the outcome of a cook that exited while no owner ran; a second tick does nothing; a bad model and a broken worktree path are launch failures that a send retries; a broken task.json and config.json do not stop the tick; a cook that never exits is killed; a ghost cook blocks a second launch; a lost lease is found before any write; a read-only session promotes; a cook whose first candidate answers HTTP 402 fails run 1, run 2 starts on the next candidate in the same session and reports done, and the chef gets one notice that names the fallback.
 - Chef e2e (a chef `pi --mode rpc --chef` on the fake model): tools are active only with `--chef`; a dispatch leads to one `chef-wake` that starts a turn; a wake queued behind a busy turn is marked notified only on delivery; a wake dropped with `clear_queue` is sent again after the turn settles; `chef_add_project` refuses an invalid branch prefix and names the one it registered, which `chef_dispatch` uses; the chef's prompt lists the model rules only in chef mode, and `chef_dispatch` refuses an unknown rule and skips a model that Pi does not know; when the first model answers HTTP 402, the chef gets one wake, after the next model is done, and the wake and `chef_result` name the fallback.
@@ -511,5 +513,5 @@ PR creation or merge automation (a brief can tell the cook to run `gh`), per-pro
 - Viewer (a real `node extension/watch.ts` process on a temp task dir): it shows the tool line, the text, and the report while the run file grows, with a character split across two appends; a provider error; a newer run file switches with a separator; a `closed` event makes it exit 0.
 - herdr add-on (`addons/herdr/test/`, `CookTabs` and the add-on entry driven by snapshots against `fake-herdr.mjs`, which logs its argv and keeps its tabs in a JSON file): a cooking task opens exactly one tab with the label, cwd, and viewer command, and the next snapshot calls herdr not at all; the command starts the viewer from a shell; an existing tab is adopted; each state change reports once with the mapped state; a closed tab is not reopened for the same run; a read-only or off snapshot calls herdr not at all and the next owner snapshot adopts again; a herdr failure is an error line, shown once; the entry asks for a snapshot at session start and skips another version; outside herdr it does nothing. Chef e2e with the add-on loaded by `-e` and the fake binary: inside herdr a dispatch opens one tab and reports `working`, then `idle` once; without `HERDR_ENV` no herdr call happens. `test/support.ts` deletes every `HERDR_*` variable, so no test reaches the human's live herdr session.
 - FleetView add-on (`addons/subagents/test/`, the add-on entry against a fake pi-subagents package in a temp agent dir whose `external-runs` module records the calls and keeps the jobs): a cooking task registers one `running` job under the session file with its activity and transcript; each outcome maps to its state and action, and an unchanged snapshot writes nothing; a task that leaves the snapshot, role off, and session shutdown unregister; a snapshot before session start is shown at session start; a job left by an earlier copy is updated; a project install is found; without the package nothing is shown and one info notice says so. Chef e2e with the add-on loaded by `-e` and the fake package in the temp agent dir: a dispatch registers one job, shows it `running`, then `completed`, and `/chef off` unregisters it.
-- pstack principles add-on (`addons/pstack-principles/test/`): each role's block starts with `# Principles: pstack`; the index in each role's block lists every vendored principle with its description and a path that exists; each role's block has its own rules and none of the other role's; `loadPrinciples` refuses a file without a description. Sync, on a fixture tree with no network: `sync-pstack.mjs` vendors the principles, drops a removed one, and a second run changes nothing. Chef e2e with the add-on loaded by `-e`: the model gets the chef principles under the pstack heading with `--chef` and after `/chef`, and no principle set block in a plain session or after `/chef off`. Without the add-on, a `--chef` model gets none. With `principles` in `config.json`: the chef gets the block for the default `pstack` and for a selection of projects only, and no block for `none` or a set that is not installed; a selected set that is not installed shows one warning line across ticks, and `/chef board` names the selection. Kitchen e2e: with the add-on in `cookArgs`, the cook's model gets the cook contract and the cook principles under the pstack heading and no chef rules; without it, the contract and no principle set block. A cook of a project without an entry gets the default set, and a cook of a project set to `none` gets no block. An edit of `config.json` between run 1 and run 2 of one task changes the block of run 2.
-- superpowers principles add-on (`addons/superpowers-principles/test/`): each role's block starts with `# Principles: superpowers`; each role's index lists its own vendored skills with the description and a path that exists, and no skill of the other role only; every vendored skill is in a role's index, and every skill that a rule names is vendored and in that role's index; each role's block has its own rules and none of the other role's; `loadSkills` refuses a file without a description. Sync, on a fixture tree with no network: `sync-superpowers.mjs` vendors the chosen skills with their companion files and the license, drops a skill that is no longer chosen, a second run changes nothing, and a checkout that lacks a chosen skill is refused with no change. Chef e2e with both set add-ons loaded by `-e`: without a selection the chef gets both chef blocks, with the default `pstack` only the pstack block, with the default `superpowers` only the superpowers block. Kitchen e2e with both set add-ons in `cookArgs`: a cook of a project set to `superpowers` gets the cook contract, then only the superpowers cook block, although the default is `pstack`.
+- pstack recipe add-on (`addons/recipe-pstack/test/`): each role's block starts with `# Recipe: pstack`; the index in each role's block lists every vendored principle with its description and a path that exists; each role's block has its own rules and none of the other role's; `loadPrinciples` refuses a file without a description. Sync, on a fixture tree with no network: `sync-pstack.mjs` vendors the principles, drops a removed one, and a second run changes nothing. Chef e2e with the add-on loaded by `-e`: the model gets the chef principles under the pstack heading with `--chef` and after `/chef`, and no recipe block in a plain session or after `/chef off`. Without the add-on, a `--chef` model gets none. With `recipe` in `config.json`: the chef gets the block for the default `pstack` and for a selection of projects only, and no block for `none` or a recipe that is not installed; a selected recipe that is not installed shows one warning line across ticks, and `/chef board` names the selection. Kitchen e2e: with the add-on in `cookArgs`, the cook's model gets the cook contract and the cook principles under the pstack heading and no chef rules; without it, the contract and no recipe block. A cook of a project without an entry gets the default recipe, and a cook of a project set to `none` gets no block. An edit of `config.json` between run 1 and run 2 of one task changes the block of run 2.
+- superpowers recipe add-on (`addons/recipe-superpowers/test/`): each role's block starts with `# Recipe: superpowers`; each role's index lists its own vendored skills with the description and a path that exists, and no skill of the other role only; every vendored skill is in a role's index, and every skill that a rule names is vendored and in that role's index; each role's block has its own rules and none of the other role's; `loadSkills` refuses a file without a description. Sync, on a fixture tree with no network: `sync-superpowers.mjs` vendors the chosen skills with their companion files and the license, drops a skill that is no longer chosen, a second run changes nothing, and a checkout that lacks a chosen skill is refused with no change. Chef e2e with both recipe add-ons loaded by `-e`: without a selection the chef gets both chef blocks, with the default `pstack` only the pstack block, with the default `superpowers` only the superpowers block. Kitchen e2e with both recipe add-ons in `cookArgs`: a cook of a project set to `superpowers` gets the cook contract, then only the superpowers cook block, although the default is `pstack`.

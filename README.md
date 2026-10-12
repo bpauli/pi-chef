@@ -55,24 +55,24 @@ node <path to pi-chef>/extension/watch.ts <kitchen>/tasks/<task id>
 
 ## Integrations
 
-chef itself depends on no terminal multiplexer and no other Pi package. It publishes the open tasks as a cooks snapshot on Pi's in-process event bus (`pi-chef:cooks:v1`), and answers a role query (`pi-chef:role:v1`) with `chef` or `cook` and the principle set that you selected for that role (see `docs/design.md`, "Integration events"). Optional add-on packages in `addons/` use them. Install only the ones you want:
+chef itself depends on no terminal multiplexer and no other Pi package. It publishes the open tasks as a cooks snapshot on Pi's in-process event bus (`pi-chef:cooks:v1`), and answers a role query (`pi-chef:role:v1`) with `chef` or `cook` and the recipe that you selected for that role (see `docs/design.md`, "Integration events"). Optional add-on packages in `addons/` use them. Install only the ones you want:
 
 | Add-on | Does |
 |---|---|
 | `addons/herdr` | Inside herdr, opens a `cook <task id>` tab per cooking task that shows the cook live, and shows each cook's state in the herdr sidebar. See `addons/herdr/README.md`. |
 | `addons/subagents` | Shows each open task as a job in the FleetView of [pi-subagents](https://pi.dev/packages/pi-subagents): running, completed, failed, or stopped when it needs you or was stopped. See `addons/subagents/README.md`. |
-| `addons/pstack-principles` | A principle set: the chef and every cook work by the principles of [pstack](https://github.com/cursor/plugins/tree/main/pstack), the agent plugin by Lauren Tan. Each gets the always-on rules of its role and an index of the 24 vendored principle files in its system prompt. See `addons/pstack-principles/README.md`. |
-| `addons/superpowers-principles` | A principle set: the chef and every cook work by the skills of [superpowers](https://github.com/obra/superpowers) by Jesse Vincent. The chef gets the planning and orchestration skills, a cook the implementation skills, each with always-on rules and an index of the 10 vendored skill files. See `addons/superpowers-principles/README.md`. |
+| `addons/recipe-pstack` | A recipe: the chef and every cook work by the principles of [pstack](https://github.com/cursor/plugins/tree/main/pstack), the agent plugin by Lauren Tan. Each gets the always-on rules of its role and an index of the 24 vendored principle files in its system prompt. See `addons/recipe-pstack/README.md`. |
+| `addons/recipe-superpowers` | A recipe: the chef and every cook work by the skills of [superpowers](https://github.com/obra/superpowers) by Jesse Vincent. The chef gets the planning and orchestration skills, a cook the implementation skills, each with always-on rules and an index of the 10 vendored skill files. See `addons/recipe-superpowers/README.md`. |
 
 Pi git sources take no subdirectory, so install an add-on from a local path, for example from the checkout that `pi install git:github.com/bpauli/pi-chef` made:
 
 ```sh
 pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/herdr
-pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/pstack-principles
-pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/superpowers-principles
+pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/recipe-pstack
+pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/recipe-superpowers
 ```
 
-A principle set is your choice of how the chef and the cooks work. chef has no principle set of its own. The sets are `pstack` and `superpowers`. Install the sets that you want, then select one with `principles` in `config.json` (see "Configuration"). Without a selection, every installed set adds its block. Another set can follow the same contract (see `docs/design.md`, "Principle sets").
+A recipe is your choice of how the chef and the cooks work. chef has no recipe of its own. The recipes are `pstack` and `superpowers`. Install the recipes that you want, then select one with `recipe` in `config.json` (see "Configuration"). Without a selection, every installed recipe adds its block. Another recipe can follow the same contract (see `docs/design.md`, "Recipes").
 
 ## Configuration
 
@@ -98,13 +98,13 @@ The kitchen lives in `<pi agent dir>/chef` (usually `~/.pi/agent/chef`). Set `CH
     "default": [{ "model": "anthropic/claude-sonnet-5-5", "thinking": "medium" }, { "model": "openai/gpt-6-astra" }]
   },
   "cookArgs": ["--no-skills"],
-  "principles": { "default": "pstack", "projects": { "obsync": "superpowers", "api": "none" } }
+  "recipe": { "default": "pstack", "projects": { "obsync": "superpowers", "api": "none" } }
 }
 ```
 
 Every field is optional. `maxCooks` caps the cooks that run at once (default 3). `cookArgs` are extra `pi` arguments for every cook.
 
-`principles` selects the principle set. A value is the name of an installed set, or `none` for no principles. `default` applies to the chef and to the cooks of every project that `projects` does not name. `projects` sets the cooks of one project by project name. `"principles": "pstack"` is short for `{ "default": "pstack" }`. Without `principles`, every installed set adds its block. The chef and each cook read the selection at the start of each turn, so an edit applies at the next turn without a restart. When you select a set that no installed add-on provides, the chef shows a warning. `chef_board` and `/chef board` show the selection.
+`recipe` selects the recipe. A value is the name of an installed recipe, or `none` for no recipe. `default` applies to the chef and to the cooks of every project that `projects` does not name. `projects` sets the cooks of one project by project name. `"recipe": "pstack"` is short for `{ "default": "pstack" }`. Without `recipe`, every installed recipe adds its block. The chef and each cook read the selection at the start of each turn, so an edit applies at the next turn without a restart. When you select a recipe that no installed add-on provides, the chef shows a warning. `chef_board` and `/chef board` show the selection. Before, this field had the name `principles`. A `config.json` with only `principles` still works, and the chef shows a line that tells you to rename the field to `recipe`.
 
 `models` tells the chef which cook models to use. Each entry is a `provider/id` model and an optional `thinking` level. `use` and `default` take one entry or a list in order of preference.
 
@@ -144,4 +144,4 @@ The tests need no network and no credentials. The e2e tests start real Pi proces
 
 ## License
 
-MIT, see `LICENSE`. The vendored pstack principles in `addons/pstack-principles/principles/` keep their own MIT license, see `addons/pstack-principles/principles/LICENSE`. The vendored superpowers skills in `addons/superpowers-principles/principles/` keep their own MIT license (Copyright (c) 2025 Jesse Vincent), see `addons/superpowers-principles/principles/LICENSE`.
+MIT, see `LICENSE`. The vendored pstack principles in `addons/recipe-pstack/principles/` keep their own MIT license, see `addons/recipe-pstack/principles/LICENSE`. The vendored superpowers skills in `addons/recipe-superpowers/principles/` keep their own MIT license (Copyright (c) 2025 Jesse Vincent), see `addons/recipe-superpowers/principles/LICENSE`.

@@ -10,7 +10,7 @@ import {
   type Notice,
   type Outcome,
   type Pid,
-  type PrinciplesConfig,
+  type RecipeConfig,
   type Profile,
   type ProjectName,
   type RunNo,
@@ -615,28 +615,28 @@ export function modelsPrompt(config: ModelsConfig): string | undefined {
   ].join("\n");
 }
 
-export type PrincipleAsker = { role: "chef" } | { role: "cook"; project: ProjectName };
+export type RecipeAsker = { role: "chef" } | { role: "cook"; project: ProjectName };
 
-/** The principle set that a role gets: a set name, `none`, or undefined for no selection. */
-export function principleSet(config: PrinciplesConfig, asker: PrincipleAsker): string | undefined {
+/** The recipe that a role gets: a recipe name, `none`, or undefined for no selection. */
+export function recipeFor(config: RecipeConfig, asker: RecipeAsker): string | undefined {
   return (asker.role === "cook" ? config.projects.get(asker.project) : undefined) ?? config.default;
 }
 
-/** One error line per selected set that no installed add-on provides. */
-export function missingSets(config: PrinciplesConfig, installed: readonly string[]): string[] {
+/** One error line per selected recipe that no installed add-on provides. */
+export function missingRecipes(config: RecipeConfig, installed: readonly string[]): string[] {
   const selected = new Set([config.default, ...config.projects.values()]);
   const missing = [...selected].filter((s): s is string => s !== undefined && s !== "none" && !installed.includes(s));
-  const have = installed.length ? `Installed sets: ${installed.join(", ")}.` : "No principle set add-on is installed.";
-  return missing.map((s) => `config.json selects the principle set "${s}", but no installed add-on provides it. ${have}`);
+  const have = installed.length ? `Installed recipes: ${installed.join(", ")}.` : "No recipe add-on is installed.";
+  return missing.map((s) => `config.json selects the recipe "${s}", but no installed add-on provides it. ${have}`);
 }
 
-export function principlesText(config: PrinciplesConfig, installed: readonly string[]): string {
+export function recipeText(config: RecipeConfig, installed: readonly string[]): string {
   const head =
     config.default !== undefined
-      ? `Principle set: ${config.default}.`
+      ? `Recipe: ${config.default}.`
       : installed.length
-        ? `Principle set: no selection, so every installed set applies (${installed.join(", ")}).`
-        : "Principle set: no selection, and no set is installed.";
-  const projects = [...config.projects].map(([project, set]) => `${project} ${set}`);
+        ? `Recipe: no selection, so every installed recipe applies (${installed.join(", ")}).`
+        : "Recipe: no selection, and no recipe is installed.";
+  const projects = [...config.projects].map(([project, recipe]) => `${project} ${recipe}`);
   return projects.length ? `${head} Per project: ${projects.join(", ")}.` : head;
 }

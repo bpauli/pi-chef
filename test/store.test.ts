@@ -139,18 +139,18 @@ test("moveToHandled tolerates a message the cook already moved", () => {
 });
 
 const NO_MODELS = { rules: [], default: [] };
-const NO_PRINCIPLES = { default: undefined, projects: new Map() };
+const NO_RECIPE = { default: undefined, projects: new Map() };
 
 test("loadConfig: a missing file gives defaults, a wrong type gives defaults plus an error that names the field", () => {
   withDir((dir) => {
     const store = new Store(dir);
-    assert.deepEqual(store.loadConfig().config, { maxCooks: 3, models: NO_MODELS, cookArgs: [], principles: NO_PRINCIPLES });
+    assert.deepEqual(store.loadConfig().config, { maxCooks: 3, models: NO_MODELS, cookArgs: [], recipe: NO_RECIPE });
     writeFileSync(join(dir, "config.json"), JSON.stringify({ maxCooks: "three" }));
     const bad = store.loadConfig();
-    assert.deepEqual(bad.config, { maxCooks: 3, models: NO_MODELS, cookArgs: [], principles: NO_PRINCIPLES });
+    assert.deepEqual(bad.config, { maxCooks: 3, models: NO_MODELS, cookArgs: [], recipe: NO_RECIPE });
     assert.match(bad.error ?? "", /config\.json is invalid at \/maxCooks/);
     writeFileSync(join(dir, "config.json"), JSON.stringify({ maxCooks: 1, cookArgs: ["-e", "x.ts"] }));
-    assert.deepEqual(store.loadConfig().config, { maxCooks: 1, models: NO_MODELS, cookArgs: ["-e", "x.ts"], principles: NO_PRINCIPLES });
+    assert.deepEqual(store.loadConfig().config, { maxCooks: 1, models: NO_MODELS, cookArgs: ["-e", "x.ts"], recipe: NO_RECIPE });
   });
 });
 
@@ -208,25 +208,36 @@ test("loadConfig refuses duplicate rule names, a bad thinking level, a bad rule 
   });
 });
 
-test("loadConfig reads principles as a default set, as a default plus per-project sets, and none as a set value", () => {
+test("loadConfig reads recipe as a default recipe, as a default plus per-project recipes, and none as a recipe value", () => {
   withDir((dir) => {
-    const shorthand = configFrom(dir, { principles: "pstack" });
+    const shorthand = configFrom(dir, { recipe: "pstack" });
     assert.equal(shorthand.error, undefined);
-    assert.deepEqual(shorthand.config.principles, { default: "pstack", projects: new Map() });
-    const full = configFrom(dir, { principles: { default: "none", projects: { obsync: "superpowers", api: "none" } } });
+    assert.deepEqual(shorthand.config.recipe, { default: "pstack", projects: new Map() });
+    const full = configFrom(dir, { recipe: { default: "none", projects: { obsync: "superpowers", api: "none" } } });
     assert.equal(full.error, undefined);
-    assert.deepEqual(full.config.principles, { default: "none", projects: new Map([["obsync", "superpowers"], ["api", "none"]]) });
-    assert.deepEqual(configFrom(dir, { principles: { projects: { api: "pstack" } } }).config.principles, { default: undefined, projects: new Map([["api", "pstack"]]) });
+    assert.deepEqual(full.config.recipe, { default: "none", projects: new Map([["obsync", "superpowers"], ["api", "none"]]) });
+    assert.deepEqual(configFrom(dir, { recipe: { projects: { api: "pstack" } } }).config.recipe, { default: undefined, projects: new Map([["api", "pstack"]]) });
   });
 });
 
-test("loadConfig refuses a bad principle set name and an unknown principles key, each as an error line with the defaults", () => {
+test("loadConfig reads the old principles field as recipe with one line that says to rename it, and refuses both fields together", () => {
   withDir((dir) => {
-    const cases: unknown[] = [{ principles: "Pstack!" }, { principles: { default: "super powers" } }, { principles: { projects: { api: "" } } }, { principles: { default: "pstack", sets: ["pstack"] } }, { principles: 3 }];
+    const old = configFrom(dir, { principles: { default: "pstack", projects: { api: "none" } } });
+    assert.deepEqual(old.config.recipe, { default: "pstack", projects: new Map([["api", "none"]]) });
+    assert.equal(old.error, `${join(dir, "config.json")} uses the old field principles. Rename it to recipe.`);
+    const both = configFrom(dir, { recipe: "pstack", principles: "superpowers" });
+    assert.deepEqual(both.config.recipe, NO_RECIPE);
+    assert.equal(both.error, `${join(dir, "config.json")} has both recipe and the old principles field. Keep recipe and delete principles.`);
+  });
+});
+
+test("loadConfig refuses a bad recipe name and an unknown recipe key, each as an error line with the defaults", () => {
+  withDir((dir) => {
+    const cases: unknown[] = [{ recipe: "Pstack!" }, { recipe: { default: "super powers" } }, { recipe: { projects: { api: "" } } }, { recipe: { default: "pstack", sets: ["pstack"] } }, { recipe: 3 }];
     for (const file of cases) {
       const { config, error } = configFrom(dir, file);
-      assert.match(error ?? "", /config\.json is invalid at \/principles/, JSON.stringify(file));
-      assert.deepEqual(config.principles, NO_PRINCIPLES);
+      assert.match(error ?? "", /config\.json is invalid at \/recipe/, JSON.stringify(file));
+      assert.deepEqual(config.recipe, NO_RECIPE);
     }
   });
 });

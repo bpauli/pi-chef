@@ -3,7 +3,7 @@ import { readFileSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { type CookReport, CookReportSchema, type TaskSpec } from "./domain.ts";
 import { ROLE_ENV, SESSION_ENV, TASK_DIR_ENV } from "./cooks.ts";
-import { principleSet } from "./derive.ts";
+import { recipeFor } from "./derive.ts";
 import { ROLE_EVENT, answerRole } from "./events.ts";
 import { Store, kitchenOfTaskDir, parseSpec } from "./store.ts";
 
@@ -61,7 +61,7 @@ export function installCook(pi: ExtensionAPI, env: NodeJS.ProcessEnv): void {
   const contract = cookContract(spec);
   pi.on("before_agent_start", (event) => ({ systemPrompt: `${event.systemPrompt}\n\n${contract}` }));
   const kitchen = new Store(kitchenOfTaskDir(taskDir));
-  pi.events.on(ROLE_EVENT, (data) => answerRole(data, "cook", principleSet(kitchen.loadConfig().config.principles, { role: "cook", project: spec.project })));
+  pi.events.on(ROLE_EVENT, (data) => answerRole(data, "cook", recipeFor(kitchen.loadConfig().config.recipe, { role: "cook", project: spec.project })));
 
   const poll = () => {
     if (!claimable) return;

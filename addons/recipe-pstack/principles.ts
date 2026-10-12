@@ -66,7 +66,7 @@ export function loadPrinciples(dir: string = PSTACK_PRINCIPLES_DIR): Principle[]
 
 export function principlesBlock(role: Role, principles: readonly Principle[]): string {
   return [
-    "# Principles: pstack",
+    "# Recipe: pstack",
     "",
     FRAME[role],
     "",

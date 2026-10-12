@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { COOKS_EVENT, COOKS_REQUEST_EVENT, type CooksSnapshot, PRINCIPLE_SETS_EVENT, type PrincipleSetsRequest, ROLE_EVENT, answerRole, cooksSnapshot, offSnapshot } from "./events.ts";
+import { COOKS_EVENT, COOKS_REQUEST_EVENT, type CooksSnapshot, RECIPES_EVENT, type RecipesRequest, ROLE_EVENT, answerRole, cooksSnapshot, offSnapshot } from "./events.ts";
 import { type Board, ChefError, ChefModeEntrySchema, errorMessage, type Millis, type Notice, type NoticeRef, type Pid, type TaskId, type WakeDetails, WakeDetailsSchema, millis, parseTaskId, runNo, taskBranch } from "./domain.ts";
-import { type ModelCheck, type RestartNote, boardHeader, droppedText, missingSets, modelsPrompt, outcomeDetail, principleSet, principlesText, boardLines, formatAge, formatWake, outcomeText, plural, queuePosition, stateText, statusText } from "./derive.ts";
+import { type ModelCheck, type RestartNote, boardHeader, droppedText, missingRecipes, modelsPrompt, outcomeDetail, recipeFor, recipeText, boardLines, formatAge, formatWake, outcomeText, plural, queuePosition, stateText, statusText } from "./derive.ts";
 import { piInvocation } from "./cooks.ts";
 import { Kitchen, type KitchenReader, type TaskResult, lostError } from "./kitchen.ts";
 import { Store, kitchenDir } from "./store.ts";
@@ -222,11 +222,11 @@ export function installChef(pi: ExtensionAPI): void {
     s.lastErrors = new Set(errors);
   };
 
-  const principles = (s: ChefSession) => s.store.loadConfig().config.principles;
-  const installedSets = (): string[] => {
-    const request: PrincipleSetsRequest = { version: 1, sets: [] };
-    pi.events.emit(PRINCIPLE_SETS_EVENT, request);
-    return [...new Set(request.sets)].sort();
+  const recipe = (s: ChefSession) => s.store.loadConfig().config.recipe;
+  const installedRecipes = (): string[] => {
+    const request: RecipesRequest = { version: 1, recipes: [] };
+    pi.events.emit(RECIPES_EVENT, request);
+    return [...new Set(request.recipes)].sort();
   };
 
   const publish = (s: ChefSession, board: Board): void => {
@@ -255,7 +255,7 @@ export function installChef(pi: ExtensionAPI): void {
         } else {
           if (s.firstTick && report.notices.length) s.restart = { cooking: report.board.cooks.busy, finished: report.notices.length };
           s.waker?.offer(report.notices);
-          showErrors(s, ctx, [...report.errors, ...missingSets(principles(s), installedSets())]);
+          showErrors(s, ctx, [...report.errors, ...missingRecipes(recipe(s), installedRecipes())]);
           board = report.board;
         }
       } else {
@@ -306,7 +306,7 @@ export function installChef(pi: ExtensionAPI): void {
     if (session?.snapshot) pi.events.emit(COOKS_EVENT, session.snapshot);
   });
   pi.events.on(ROLE_EVENT, (data) => {
-    if (session) answerRole(data, "chef", principleSet(principles(session), { role: "chef" }));
+    if (session) answerRole(data, "chef", recipeFor(recipe(session), { role: "chef" }));
   });
   pi.on("message_end", (event) => {
     const m = event.message;
@@ -328,7 +328,7 @@ export function installChef(pi: ExtensionAPI): void {
     return session;
   };
   const reader = (): KitchenReader => current().reader;
-  const board = (s: ChefSession): Promise<string> => boardText(s.reader, principlesText(principles(s), installedSets()));
+  const board = (s: ChefSession): Promise<string> => boardText(s.reader, recipeText(recipe(s), installedRecipes()));
   const owner = (): Kitchen => {
     const r = reader();
     if (!session?.owner) throw lostError(r.holder());
@@ -486,12 +486,12 @@ export function installChef(pi: ExtensionAPI): void {
   });
 }
 
-async function boardText(reader: KitchenReader, principles: string): Promise<string> {
+async function boardText(reader: KitchenReader, recipe: string): Promise<string> {
   const board = await reader.board();
   const projects = board.projects.length ? board.projects.map((p) => `${p.name}: ${p.path} (base ${p.baseBranch})`).join("\n") : "No projects. Register one with chef_add_project.";
   const lines = board.open.length || board.broken.length ? boardLines(board, now(), BOARD_WIDTH) : [boardHeader(board), "No open tasks."];
   const closed = board.closedCount ? `${plural(board.closedCount, "closed task")} not shown.` : "";
-  return [projects, principles, "", ...lines, closed].filter((l, i, all) => l !== "" || i < all.length - 1).join("\n");
+  return [projects, recipe, "", ...lines, closed].filter((l, i, all) => l !== "" || i < all.length - 1).join("\n");
 }
 
 const RESULT = { max: 4000, bodyMin: 200, bodyMax: 2000, diffstatReserve: 400, partBreaks: 4 };

@@ -11,8 +11,8 @@ npm test             # node --test: unit, git, and offline e2e tests with the fa
 CHEF_TEST_PI=$(readlink -f $(which pi)) node --test test/chef.test.ts   # chef e2e on an installed Pi binary
 npm run check        # both
 pi -e ./extension/index.ts --chef   # try it in a real Pi session
-node addons/pstack-principles/sync-pstack.mjs <cursor/plugins checkout>   # update the vendored pstack principles
-node addons/superpowers-principles/sync-superpowers.mjs <obra/superpowers checkout>   # update the vendored superpowers skills
+node addons/recipe-pstack/sync-pstack.mjs <cursor/plugins checkout>   # update the vendored pstack principles
+node addons/recipe-superpowers/sync-superpowers.mjs <obra/superpowers checkout>   # update the vendored superpowers skills
 ```
 
 The e2e tests start real Pi processes on `test/fake-model/`, a scripted local model. They need no network and no credentials.
@@ -31,7 +31,7 @@ The e2e tests start real Pi processes on `test/fake-model/`, a scripted local mo
 
 ## Principles
 
-This repo follows the [pstack](https://github.com/cursor/plugins/tree/main/pstack) principles. Each one below has a concrete rule here. Before you apply one, read its file in `addons/pstack-principles/principles/principle-<name>/SKILL.md`, for example `addons/pstack-principles/principles/principle-model-the-domain/SKILL.md`. These files are vendored for the optional pstack principles add-on, one principle set for chef users. This repo's own development follows them too. Do not edit them. To update them, rerun `addons/pstack-principles/sync-pstack.mjs` (see `addons/pstack-principles/README.md`).
+This repo follows the [pstack](https://github.com/cursor/plugins/tree/main/pstack) principles. Each one below has a concrete rule here. Before you apply one, read its file in `addons/recipe-pstack/principles/principle-<name>/SKILL.md`, for example `addons/recipe-pstack/principles/principle-model-the-domain/SKILL.md`. These files are vendored for the optional pstack recipe add-on, one recipe for chef users. This repo's own development follows them too. Do not edit them. To update them, rerun `addons/recipe-pstack/sync-pstack.mjs` (see `addons/recipe-pstack/README.md`).
 
 | Principle | Rule in this repo |
 |---|---|

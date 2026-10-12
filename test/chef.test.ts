@@ -8,11 +8,11 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { TICK_MS, WAKE_TIMING } from "../extension/chef.ts";
 import { scanCooks, signalCook } from "../extension/cooks.ts";
-import { PSTACK_PRINCIPLES_DIR, PSTACK_RULES } from "../addons/pstack-principles/principles.ts";
-import { SUPERPOWERS_RULES } from "../addons/superpowers-principles/superpowers.ts";
+import { PSTACK_PRINCIPLES_DIR, PSTACK_RULES } from "../addons/recipe-pstack/principles.ts";
+import { SUPERPOWERS_RULES } from "../addons/recipe-superpowers/superpowers.ts";
 import { Store } from "../extension/store.ts";
 import type { CooksSnapshot } from "../extension/events.ts";
-import { CHEF_ENTRY, COMMIT_STEP, COOKS_RECORDER, PSTACK_PRINCIPLES_ADDON, SUPERPOWERS_PRINCIPLES_ADDON, ROLE_RECORDER, FAKE_HERDR, HERDR_ADDON, SUBAGENTS_ADDON, installFakeSubagents, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, ROOT, type TempKitchen, makeRepo, sleep, startFakeModel, tempKitchen, until } from "./support.ts";
+import { CHEF_ENTRY, COMMIT_STEP, COOKS_RECORDER, PSTACK_RECIPE_ADDON, SUPERPOWERS_RECIPE_ADDON, ROLE_RECORDER, FAKE_HERDR, HERDR_ADDON, SUBAGENTS_ADDON, installFakeSubagents, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, ROOT, type TempKitchen, makeRepo, sleep, startFakeModel, tempKitchen, until } from "./support.ts";
 
 let fake: Awaited<ReturnType<typeof startFakeModel>>;
 let tk: TempKitchen;
@@ -100,15 +100,15 @@ function assertChefPrinciples(prompt: string, on: boolean, when: string): void {
   if (on) {
     for (const rule of PSTACK_RULES.chef) assert.ok(prompt.includes(rule.text), `${when}: chef rule present: ${rule.text}`);
     assert.ok(prompt.includes(PRINCIPLE_PATH), `${when}: the index names the vendored files`);
-    assert.ok(prompt.includes("\n# Principles: pstack\n"), `${when}: the block heading names the pstack set`);
+    assert.ok(prompt.includes("\n# Recipe: pstack\n"), `${when}: the block heading names the pstack recipe`);
   } else {
     for (const rule of PSTACK_RULES.chef) assert.ok(!prompt.includes(rule.text), `${when}: no chef rule: ${rule.text}`);
     assert.ok(!prompt.includes(PRINCIPLE_PATH), `${when}: no principle index`);
-    assert.ok(!prompt.includes("# Principles:"), `${when}: no principle set block`);
+    assert.ok(!prompt.includes("# Recipe:"), `${when}: no recipe block`);
   }
 }
 
-test("with the pstack principles add-on the chef's model gets the chef principles with --chef, and a plain session or a chef without the add-on gets none", async () => {
+test("with the pstack recipe add-on the chef's model gets the chef principles with --chef, and a plain session or a chef without the add-on gets none", async () => {
   tk = tempKitchen();
   const echo = async (extra: string[]) => {
     const run = startPi("json", extra, "STEP echo-system:");
@@ -116,14 +116,14 @@ test("with the pstack principles add-on the chef's model gets the chef principle
     assert.equal(await run.exited, 0);
     return lastAssistantText(run.events);
   };
-  assertChefPrinciples(await echo(["-e", PSTACK_PRINCIPLES_ADDON]), false, "plain session with the add-on");
-  assertChefPrinciples(await echo(["--chef", "-e", PSTACK_PRINCIPLES_ADDON]), true, "--chef with the add-on");
+  assertChefPrinciples(await echo(["-e", PSTACK_RECIPE_ADDON]), false, "plain session with the add-on");
+  assertChefPrinciples(await echo(["--chef", "-e", PSTACK_RECIPE_ADDON]), true, "--chef with the add-on");
   assertChefPrinciples(await echo(["--chef"]), false, "--chef without the add-on");
 });
 
-test("with the pstack principles add-on the chef principles follow /chef on and /chef off in the same session", async () => {
+test("with the pstack recipe add-on the chef principles follow /chef on and /chef off in the same session", async () => {
   tk = tempKitchen();
-  const pi = startPi("rpc", ["-e", PSTACK_PRINCIPLES_ADDON]);
+  const pi = startPi("rpc", ["-e", PSTACK_RECIPE_ADDON]);
   const send = (id: string, message: string) => pi.proc.stdin!.write(`${JSON.stringify({ id, type: "prompt", message })}\n`);
   const answered = (id: string) => until(`response ${id}`, () => (pi.events.some((e) => e.type === "response" && e.id === id) ? true : undefined));
   const echoAfter = async (id: string, message: string, settled: number) => {
@@ -145,11 +145,11 @@ test("with the pstack principles add-on the chef principles follow /chef on and 
 
 const writeConfig = (config: Record<string, unknown>) => writeFileSync(join(tk.kitchenDir, "config.json"), JSON.stringify({ model: FAKE_MODEL, cookArgs: ["-e", FAKE_PROVIDER], ...config }));
 
-test("the chef's model gets the pstack block when config.json selects pstack, and no block when it selects none or a set that is not installed", async () => {
+test("the chef's model gets the pstack block when config.json selects pstack, and no block when it selects none or a recipe that is not installed", async () => {
   tk = tempKitchen();
-  const echo = async (principles: unknown) => {
-    writeConfig({ principles });
-    const run = startPi("json", ["--chef", "-e", PSTACK_PRINCIPLES_ADDON], "STEP echo-system:");
+  const echo = async (recipe: unknown) => {
+    writeConfig({ recipe });
+    const run = startPi("json", ["--chef", "-e", PSTACK_RECIPE_ADDON], "STEP echo-system:");
     run.proc.stdin!.end();
     assert.equal(await run.exited, 0);
     return lastAssistantText(run.events);
@@ -160,16 +160,16 @@ test("the chef's model gets the pstack block when config.json selects pstack, an
   assertChefPrinciples(await echo("superpowers"), false, "default superpowers, not installed");
 });
 
-test("with the pstack and superpowers add-ons, the chef's model gets both blocks without a selection, and only the block of the selected set with one", async () => {
+test("with the pstack and superpowers add-ons, the chef's model gets both blocks without a selection, and only the block of the selected recipe with one", async () => {
   tk = tempKitchen();
-  const echo = async (principles: unknown) => {
-    writeConfig(principles === undefined ? {} : { principles });
-    const run = startPi("json", ["--chef", "-e", PSTACK_PRINCIPLES_ADDON, "-e", SUPERPOWERS_PRINCIPLES_ADDON], "STEP echo-system:");
+  const echo = async (recipe: unknown) => {
+    writeConfig(recipe === undefined ? {} : { recipe });
+    const run = startPi("json", ["--chef", "-e", PSTACK_RECIPE_ADDON, "-e", SUPERPOWERS_RECIPE_ADDON], "STEP echo-system:");
     run.proc.stdin!.end();
     assert.equal(await run.exited, 0);
     return lastAssistantText(run.events);
   };
-  const superpowersChef = (prompt: string) => SUPERPOWERS_RULES.chef.every((r) => prompt.includes(r.text)) && prompt.includes("\n# Principles: superpowers\n");
+  const superpowersChef = (prompt: string) => SUPERPOWERS_RULES.chef.every((r) => prompt.includes(r.text)) && prompt.includes("\n# Recipe: superpowers\n");
   const both = await echo(undefined);
   assertChefPrinciples(both, true, "no selection");
   assert.ok(superpowersChef(both), "no selection: the superpowers chef block too");
@@ -177,27 +177,27 @@ test("with the pstack and superpowers add-ons, the chef's model gets both blocks
 
   const pstack = await echo("pstack");
   assertChefPrinciples(pstack, true, "default pstack");
-  assert.ok(!pstack.includes("# Principles: superpowers"), "default pstack: no superpowers block");
+  assert.ok(!pstack.includes("# Recipe: superpowers"), "default pstack: no superpowers block");
 
   const superpowers = await echo({ default: "superpowers", projects: { api: "pstack" } });
   assert.ok(superpowersChef(superpowers), "default superpowers: the superpowers chef block");
-  assert.ok(!superpowers.includes("# Principles: pstack"), "default superpowers: no pstack block");
+  assert.ok(!superpowers.includes("# Recipe: pstack"), "default superpowers: no pstack block");
 });
 
 const NotifySchema = Type.Object({ type: Type.Literal("extension_ui_request"), method: Type.Literal("notify"), message: Type.String() });
 const notes = (events: Event[]): string[] => events.flatMap((e) => (Value.Check(NotifySchema, e) ? [e.message] : []));
 
-test("a principle set selection that no installed add-on provides shows one warning line, and the board names the selected sets", async () => {
-  tk = tempKitchen({ principles: { default: "house", projects: { api: "pstack" } } });
-  const pi = startPi("rpc", ["--chef", "-e", PSTACK_PRINCIPLES_ADDON]);
-  const warning = 'chef: config.json selects the principle set "house", but no installed add-on provides it. Installed sets: pstack.';
+test("a recipe selection that no installed add-on provides shows one warning line, and the board names the selected recipes", async () => {
+  tk = tempKitchen({ recipe: { default: "house", projects: { api: "pstack" } } });
+  const pi = startPi("rpc", ["--chef", "-e", PSTACK_RECIPE_ADDON]);
+  const warning = 'chef: config.json selects the recipe "house", but no installed add-on provides it. Installed recipes: pstack.';
   await until("the warning", () => (notes(pi.events).includes(warning) ? true : undefined));
   await sleep(3 * TICK_MS);
-  assert.deepEqual(notes(pi.events).filter((n) => n.includes("principle set")), [warning], "shown once across ticks");
+  assert.deepEqual(notes(pi.events).filter((n) => n.includes("recipe")), [warning], "shown once across ticks");
 
   pi.proc.stdin!.write(`${JSON.stringify({ id: "board", type: "prompt", message: "/chef board" })}\n`);
-  const board = await until("the board", () => notes(pi.events).find((n) => n.includes("Principle set:")));
-  assert.match(board, /^Principle set: house\. Per project: api pstack\.$/m);
+  const board = await until("the board", () => notes(pi.events).find((n) => n.includes("Recipe:")));
+  assert.match(board, /^Recipe: house\. Per project: api pstack\.$/m);
   pi.proc.stdin!.end();
   assert.equal(await pi.exited, 0);
 });

@@ -25,9 +25,9 @@ test("the principle index in each role's block lists every vendored principle wi
   }
 });
 
-test("each role's block starts with a heading that names the pstack set", () => {
+test("each role's block starts with a heading that names the pstack recipe", () => {
   const principles = loadPrinciples(PSTACK_PRINCIPLES_DIR);
-  for (const role of ROLES) assert.equal(principlesBlock(role, principles).split("\n")[0], "# Principles: pstack", role);
+  for (const role of ROLES) assert.equal(principlesBlock(role, principles).split("\n")[0], "# Recipe: pstack", role);
 });
 
 test("each role's block carries its own rules, none of the other role's, and every principle a rule cites is in the index", () => {

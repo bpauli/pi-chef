@@ -139,10 +139,10 @@ export const ModelRuleSchema = Type.Object(
   { additionalProperties: false },
 );
 
-const SetNameSchema = Type.String({ pattern: "^[a-z0-9-]+$", description: "a principle set name, or none" });
-const PrinciplesSchema = Type.Union([
-  SetNameSchema,
-  Type.Object({ default: Type.Optional(SetNameSchema), projects: Type.Optional(Type.Record(Type.String(), SetNameSchema)) }, { additionalProperties: false }),
+const RecipeNameSchema = Type.String({ pattern: "^[a-z0-9-]+$", description: "a recipe name, or none" });
+const RecipeSchema = Type.Union([
+  RecipeNameSchema,
+  Type.Object({ default: Type.Optional(RecipeNameSchema), projects: Type.Optional(Type.Record(Type.String(), RecipeNameSchema)) }, { additionalProperties: false }),
 ]);
 
 export const ConfigSchema = Type.Object(
@@ -154,7 +154,8 @@ export const ConfigSchema = Type.Object(
       Type.Object({ rules: Type.Optional(Type.Array(ModelRuleSchema)), default: Type.Optional(ProfilesSchema) }, { additionalProperties: false }),
     ),
     cookArgs: Type.Optional(Type.Array(Type.String(), { description: "extra pi args for every cook" })),
-    principles: Type.Optional(PrinciplesSchema),
+    recipe: Type.Optional(RecipeSchema),
+    principles: Type.Optional(RecipeSchema),
   },
   { additionalProperties: false },
 );
@@ -170,8 +171,8 @@ export interface ModelsConfig {
   rules: ModelRule[];
   default: Profile[];
 }
-/** Each value is a set name or `none`. An unset value is no selection: every installed set adds its block. */
-export interface PrinciplesConfig {
+/** Each value is a recipe name or `none`. An unset value is no selection: every installed recipe adds its block. */
+export interface RecipeConfig {
   default: string | undefined;
   projects: ReadonlyMap<string, string>;
 }
@@ -179,23 +180,25 @@ export interface Config {
   maxCooks: number;
   models: ModelsConfig;
   cookArgs: string[];
-  principles: PrinciplesConfig;
+  recipe: RecipeConfig;
 }
-export const DEFAULT_CONFIG: Config = { maxCooks: 3, models: { rules: [], default: [] }, cookArgs: [], principles: { default: undefined, projects: new Map() } };
+export const DEFAULT_CONFIG: Config = { maxCooks: 3, models: { rules: [], default: [] }, cookArgs: [], recipe: { default: undefined, projects: new Map() } };
 
 const listOf = (p: Profile | Profile[]): Profile[] => (Array.isArray(p) ? p : [p]);
 
-/** Normalizes a parsed config file. The old top-level `model` and `thinking` become the default list. */
+/** Normalizes a parsed config file. The old top-level `model` and `thinking` become the default list, and the old `principles` becomes `recipe`. */
 export function configOf(file: ConfigFile, path: string): Config {
   if (file.models !== undefined && (file.model !== undefined || file.thinking !== undefined)) {
     throw new ChefError(`${path} has both models and the old model or thinking field. Move them into models.default.`);
   }
+  if (file.recipe !== undefined && file.principles !== undefined) throw new ChefError(`${path} has both recipe and the old principles field. Keep recipe and delete principles.`);
   if (file.thinking !== undefined && file.model === undefined) throw new ChefError(`${path} has thinking without model. Set both, or use models.default.`);
   const names = new Set<string>();
   for (const rule of file.models?.rules ?? []) {
     if (names.has(rule.name)) throw new ChefError(`${path} has two model rules named "${rule.name}". Rule names must be unique.`);
     names.add(rule.name);
   }
+  const recipe = file.recipe ?? file.principles;
   const shorthand: Profile[] = file.model === undefined ? [] : [file.thinking === undefined ? { model: file.model } : { model: file.model, thinking: file.thinking }];
   return {
     maxCooks: file.maxCooks ?? DEFAULT_CONFIG.maxCooks,
@@ -204,10 +207,10 @@ export function configOf(file: ConfigFile, path: string): Config {
       default: file.models?.default === undefined ? shorthand : listOf(file.models.default),
     },
     cookArgs: file.cookArgs ?? [],
-    principles:
-      typeof file.principles === "string"
-        ? { default: file.principles, projects: new Map() }
-        : { default: file.principles?.default, projects: new Map(Object.entries(file.principles?.projects ?? {})) },
+    recipe:
+      typeof recipe === "string"
+        ? { default: recipe, projects: new Map() }
+        : { default: recipe?.default, projects: new Map(Object.entries(recipe?.projects ?? {})) },
   };
 }
 

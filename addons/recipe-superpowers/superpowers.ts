@@ -48,8 +48,8 @@ export const SUPERPOWERS_RULES: Record<Role, readonly Rule[]> = {
 
 const INDEX_NOTE = "The index after them lists each skill, when it applies, and the file that explains it.";
 const FRAME: Record<Role, string> = {
-  cook: `The user chose the superpowers set. You work by its skills. No human watches this run: where a skill tells you to ask or wait for your human partner, make a reversible choice yourself, or report needs_decision for a product, scope, or destructive choice. The rules below are always on. ${INDEX_NOTE}`,
-  chef: `The user chose the superpowers set. You run the kitchen by its skills. Your human partner is the human who talks to you. Your cooks are the subagents of the skills: a chef_dispatch with a complete brief is a subagent dispatch. The kitchen owns the worktrees, the branches, and their landing, so skip the skill steps that use using-git-worktrees or finishing-a-development-branch. The rules below are always on. ${INDEX_NOTE}`,
+  cook: `The user chose the superpowers recipe. You work by its skills. No human watches this run: where a skill tells you to ask or wait for your human partner, make a reversible choice yourself, or report needs_decision for a product, scope, or destructive choice. The rules below are always on. ${INDEX_NOTE}`,
+  chef: `The user chose the superpowers recipe. You run the kitchen by its skills. Your human partner is the human who talks to you. Your cooks are the subagents of the skills: a chef_dispatch with a complete brief is a subagent dispatch. The kitchen owns the worktrees, the branches, and their landing, so skip the skill steps that use using-git-worktrees or finishing-a-development-branch. The rules below are always on. ${INDEX_NOTE}`,
 };
 
 export function loadSkills(dir: string = SUPERPOWERS_DIR): Skill[] {
@@ -69,7 +69,7 @@ const sentence = (text: string): string => (/[.!?]\)?$/.test(text) ? text : `${t
 
 export function superpowersBlock(role: Role, skills: readonly Skill[]): string {
   return [
-    "# Principles: superpowers",
+    "# Recipe: superpowers",
     "",
     FRAME[role],
     "",

@@ -12,9 +12,9 @@ const vendored = (): string[] =>
     .map((e) => e.name)
     .sort();
 
-test("each role's block starts with a heading that names the superpowers set", () => {
+test("each role's block starts with a heading that names the superpowers recipe", () => {
   const skills = loadSkills();
-  for (const role of ROLES) assert.equal(superpowersBlock(role, skills).split("\n")[0], "# Principles: superpowers", role);
+  for (const role of ROLES) assert.equal(superpowersBlock(role, skills).split("\n")[0], "# Recipe: superpowers", role);
 });
 
 test("each role's index lists its own vendored skills with description and an existing path, and no skill of the other role only", () => {

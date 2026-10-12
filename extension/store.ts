@@ -152,7 +152,9 @@ export class Store {
     const path = join(this.dir, "config.json");
     if (!existsSync(path)) return { config: DEFAULT_CONFIG, error: undefined };
     try {
-      return { config: configOf(parseFile(ConfigSchema, path, readFileSync(path, "utf8")), path), error: undefined };
+      const file = parseFile(ConfigSchema, path, readFileSync(path, "utf8"));
+      const config = configOf(file, path);
+      return { config, error: file.principles === undefined ? undefined : `${path} uses the old field principles. Rename it to recipe.` };
     } catch (e) {
       return { config: DEFAULT_CONFIG, error: errorMessage(e) };
     }

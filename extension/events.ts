@@ -78,31 +78,31 @@ export const offSnapshot = (sessionId: string): CooksSnapshot => ({ version: 1, 
  * Asks which pi-chef role this Pi process has. The asker emits a request with no
  * `role`. Pi's event bus runs listeners synchronously, so chef has filled `role`
  * when `emit` returns: `chef` while chef mode is on, `cook` in a cook process.
- * Otherwise `role` stays unset. With a role, chef also fills `principleSet` when
- * config.json selects a principle set for that role.
+ * Otherwise `role` stays unset. With a role, chef also fills `recipe` when
+ * config.json selects a recipe for that role.
  */
 export const ROLE_EVENT = "pi-chef:role:v1";
 
 export interface RoleRequest {
   version: 1;
   role?: "chef" | "cook";
-  /** A set name, or `none`. Unset: no selection, so every installed set adds its block. */
-  principleSet?: string;
+  /** A recipe name, or `none`. Unset: no selection, so every installed recipe adds its block. */
+  recipe?: string;
 }
 
 const RoleRequestSchema = Type.Object({ version: Type.Literal(1) });
 
-export function answerRole(data: unknown, role: NonNullable<RoleRequest["role"]>, principleSet: string | undefined): void {
-  if (Value.Check(RoleRequestSchema, data)) Object.assign(data, principleSet === undefined ? { role } : { role, principleSet });
+export function answerRole(data: unknown, role: NonNullable<RoleRequest["role"]>, recipe: string | undefined): void {
+  if (Value.Check(RoleRequestSchema, data)) Object.assign(data, recipe === undefined ? { role } : { role, recipe });
 }
 
 /**
- * Lists the installed principle sets. Chef emits a request with an empty `sets`,
- * and each set add-on pushes its name before `emit` returns.
+ * Lists the installed recipes. Chef emits a request with an empty `recipes`,
+ * and each recipe add-on pushes its name before `emit` returns.
  */
-export const PRINCIPLE_SETS_EVENT = "pi-chef:principle-sets:v1";
+export const RECIPES_EVENT = "pi-chef:recipes:v1";
 
-export interface PrincipleSetsRequest {
+export interface RecipesRequest {
   version: 1;
-  sets: string[];
+  recipes: string[];
 }

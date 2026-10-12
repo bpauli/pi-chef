@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Vendors the pstack principle skills into addons/pstack-principles/principles/.
-// Usage: node addons/pstack-principles/sync-pstack.mjs <cursor-plugins checkout> [out dir]
+// Vendors the pstack principle skills into addons/recipe-pstack/principles/.
+// Usage: node addons/recipe-pstack/sync-pstack.mjs <cursor-plugins checkout> [out dir]
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 const UPSTREAM = "https://github.com/cursor/plugins/tree/main/pstack";
 const [checkout, outArg] = process.argv.slice(2);
 if (!checkout) {
-  console.error("Usage: node addons/pstack-principles/sync-pstack.mjs <cursor-plugins checkout> [out dir]");
+  console.error("Usage: node addons/recipe-pstack/sync-pstack.mjs <cursor-plugins checkout> [out dir]");
   process.exit(2);
 }
 const out = resolve(outArg ?? join(import.meta.dirname, "principles"));
@@ -47,7 +47,7 @@ writeFileSync(
     `Commit: ${sha}`,
     `Date: ${date}`,
     "",
-    "Do not edit these files by hand; rerun addons/pstack-principles/sync-pstack.mjs with a cursor/plugins checkout.",
+    "Do not edit these files by hand; rerun addons/recipe-pstack/sync-pstack.mjs with a cursor/plugins checkout.",
     "",
   ].join("\n"),
 );
