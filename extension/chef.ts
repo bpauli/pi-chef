@@ -495,7 +495,8 @@ function cut(text: string, max: number): string {
 export function resultText(r: TaskResult, at: Millis): string {
   const { spec, state } = r.view;
   const age = state.kind === "idle" || state.kind === "cooking" ? ` ${formatAge(state.since, at)}` : "";
-  const run = state.kind === "idle" && state.run !== undefined ? `, run ${state.run}` : state.kind === "cooking" ? `, run ${state.run}` : "";
+  const on = r.view.model ? ` on ${r.view.model}` : "";
+  const run = state.kind === "idle" && state.run !== undefined ? `, run ${state.run}${on}` : state.kind === "cooking" ? `, run ${state.run}${on}` : "";
   const head = `${spec.id} "${spec.title}": ${state.kind === "idle" ? `idle${age}, ${outcomeText(state.outcome)}` : stateText(state) + age}${run}.`;
   let body = "";
   if (state.kind === "idle") {

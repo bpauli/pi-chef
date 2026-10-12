@@ -26,7 +26,7 @@ function fakeClock() {
   };
 }
 
-const notice = (task: string, run = 1): Notice => ({ task: task as TaskId, title: task, run: runNo(run), outcome: { kind: "done", summary: "s", reported: true } });
+const notice = (task: string, run = 1): Notice => ({ task: task as TaskId, title: task, run: runNo(run), model: undefined, tried: [], outcome: { kind: "done", summary: "s", reported: true } });
 
 test("the waker holds the first notice for the quiet window, and a second notice extends it into the same wake", () => {
   const clock = fakeClock();

@@ -220,15 +220,18 @@ export type CookReport = Static<typeof CookReportSchema>;
 
 export type Activity = { kind: "starting" } | { kind: "thinking" } | { kind: "tool"; tool: string; detail: string };
 
+/** provider: the model call failed after Pi's own retries. crash: the cook died before it settled. launch: no output at all. report: the cook reported failed. */
+export type FailCause = "provider" | "crash" | "launch" | "report";
+
 export type Outcome =
   | { kind: "done"; summary: string; reported: boolean }
   | { kind: "needs_decision"; question: string }
   | { kind: "blocked"; reason: string }
-  | { kind: "failed"; reason: string }
+  | { kind: "failed"; reason: string; cause: FailCause }
   | { kind: "stopped" };
 
 export type TaskState =
-  | { kind: "queued"; why: "new" | "message" | "interrupted-launch" }
+  | { kind: "queued"; why: "new" | "message" | "interrupted-launch" | "fallback" }
   | { kind: "cooking"; run: RunNo; since: Millis; activity: Activity }
   | { kind: "idle"; run: RunNo | undefined; since: Millis; outcome: Outcome }
   | { kind: "closed"; at: Millis; discarded: boolean };
@@ -236,12 +239,23 @@ export type TaskState =
 export interface TaskView {
   spec: TaskSpec;
   state: TaskState;
+  /** The model of the current or last run, or of the next run while queued. Undefined: Pi's default model. */
+  model: string | undefined;
+}
+
+/** A run that failed with a provider error and was followed by a run on the next candidate. */
+export interface Tried {
+  model: string;
+  error: string;
 }
 
 export interface Notice {
   task: TaskId;
   title: string;
   run: RunNo;
+  model: string | undefined;
+  /** The runs since the last notice that fell back to the next candidate, oldest first. */
+  tried: Tried[];
   outcome: Exclude<Outcome, { kind: "stopped" }>;
 }
 

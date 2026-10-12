@@ -17,6 +17,7 @@ import {
   type TaskSpec,
   type TaskState,
   type TaskView,
+  type Tried,
   millis,
   runNo,
 } from "./domain.ts";
@@ -31,6 +32,8 @@ export interface RunFacts {
   activity: Activity;
   verdict: Verdict | undefined;
   finalText: string | undefined;
+  /** provider/id from the last assistant message. */
+  model: string | undefined;
 }
 
 export const EMPTY_RUN: RunFacts = {
@@ -41,6 +44,7 @@ export const EMPTY_RUN: RunFacts = {
   activity: { kind: "starting" },
   verdict: undefined,
   finalText: undefined,
+  model: undefined,
 };
 
 const TimedMessageLine = Type.Object({ type: Type.Literal("message_end"), message: Type.Object({ timestamp: Type.Number() }) });
@@ -59,6 +63,8 @@ const AssistantEndLine = Type.Object({
     content: Type.Array(Type.Object({ type: Type.String(), text: Type.Optional(Type.String()) })),
     errorMessage: Type.Optional(Type.String()),
     stopReason: Type.Optional(Type.String()),
+    provider: Type.Optional(Type.String()),
+    model: Type.Optional(Type.String()),
     timestamp: Type.Optional(Type.Number()),
   }),
 });
@@ -93,6 +99,7 @@ export function foldRunLine(facts: RunFacts, line: string): RunFacts {
       ...facts,
       lastAt: message.timestamp === undefined ? facts.lastAt : millis(message.timestamp),
       finalText: text || facts.finalText,
+      model: message.provider && message.model ? `${message.provider}/${message.model}` : facts.model,
       verdict: failed ? { kind: "provider-error", message: message.errorMessage ?? "provider error" } : facts.verdict?.kind === "report" ? facts.verdict : undefined,
     };
   }
@@ -127,6 +134,8 @@ export interface RunRecord {
 
 export interface TaskRecord {
   spec: TaskSpec;
+  /** The spec's models, or the kitchen default when the spec has none. */
+  candidates: readonly Profile[];
   events: readonly TaskEvent[];
   runs: readonly RunRecord[];
   pendingAt: readonly Millis[];
@@ -151,6 +160,25 @@ interface Folded {
   resumable: boolean;
   held: boolean;
   briefDelivered: boolean;
+  fallback: boolean;
+}
+
+const providerError = (run: RunRecord): string | undefined => (run.facts.settled && run.facts.verdict?.kind === "provider-error" ? run.facts.verdict.message : undefined);
+
+/** Each earlier run that failed with a provider error moves this run one candidate down the list. The last candidate stays. */
+export function profileFor(rec: TaskRecord, n: RunNo): Profile | undefined {
+  const failures = rec.runs.filter((r) => r.n < n && providerError(r) !== undefined).length;
+  return rec.candidates[Math.min(failures, rec.candidates.length - 1)];
+}
+
+const runModel = (rec: TaskRecord, run: RunRecord): string | undefined => run.facts.model ?? profileFor(rec, run.n)?.model;
+const DEFAULT_MODEL_TEXT = "Pi's default model";
+
+/** The run that the next run falls back from: the last run, when it failed with a provider error. */
+export function fallbackFrom(rec: TaskRecord): Tried | undefined {
+  const last = rec.runs.at(-1);
+  const error = last && providerError(last);
+  return last && error !== undefined ? { model: runModel(rec, last) ?? DEFAULT_MODEL_TEXT, error } : undefined;
 }
 
 const errTail = (text: string): string => text.trim().split("\n").filter(Boolean).slice(-3).join(" ");
@@ -189,6 +217,11 @@ function fold(rec: TaskRecord): Folded {
     resumable,
     held: lastPause !== undefined && lastPause.run === nextRun && !resumable,
     briefDelivered: rec.runs.some((r) => r.facts.prompted),
+    fallback:
+      started &&
+      providerError(last) !== undefined &&
+      lastStop?.run !== last.n &&
+      rec.runs.filter((r) => providerError(r) !== undefined).length < rec.candidates.length,
   };
 }
 
@@ -197,8 +230,13 @@ export function nextRunOf(rec: TaskRecord): RunNo {
 }
 
 export function deriveTask(rec: TaskRecord, live: LiveCooks, now: Millis): TaskView {
-  const view = (state: TaskState): TaskView => ({ spec: rec.spec, state });
-  const { last, lastStop, lastPause, closed, launchFailure, resumable, held } = fold(rec);
+  const { last, nextRun, lastStop, lastPause, closed, launchFailure, resumable, held, fallback } = fold(rec);
+  const modelOf = (state: TaskState): string | undefined => {
+    if (state.kind === "closed") return undefined;
+    const run = state.kind === "queued" ? undefined : rec.runs.find((r) => r.n === state.run);
+    return run ? runModel(rec, run) : profileFor(rec, state.kind === "queued" || state.run === undefined ? nextRun : state.run)?.model;
+  };
+  const view = (state: TaskState): TaskView => ({ spec: rec.spec, state, model: modelOf(state) });
   if (closed) return view({ kind: "closed", at: millis(closed.at), discarded: closed.discarded });
   const pid = live.get(rec.spec.sessionId);
   if (pid !== undefined && last !== undefined && last.claim.kind !== "none" && !last.facts.settled) {
@@ -206,13 +244,14 @@ export function deriveTask(rec: TaskRecord, live: LiveCooks, now: Millis): TaskV
   }
   if (launchFailure) {
     if (resumable) return view({ kind: "queued", why: "message" });
-    return view({ kind: "idle", run: launchFailure.run, since: launchFailure.at, outcome: { kind: "failed", reason: launchFailure.reason } });
+    return view({ kind: "idle", run: launchFailure.run, since: launchFailure.at, outcome: { kind: "failed", reason: launchFailure.reason, cause: "launch" } });
   }
   const stopped = (run: RunNo | undefined): TaskView => view({ kind: "idle", run, since: millis(lastPause?.at ?? now), outcome: { kind: "stopped" } });
   if (last && last.claim.kind !== "started") return held ? stopped(rec.runs.at(-2)?.n) : view({ kind: "queued", why: "interrupted-launch" });
   if (resumable) return view({ kind: "queued", why: "message" });
   if (!last) return held ? stopped(undefined) : view({ kind: "queued", why: "new" });
   if (held) return stopped(last.n);
+  if (fallback) return view({ kind: "queued", why: "fallback" });
   const since = last.facts.lastAt ?? last.facts.startedAt ?? now;
   return view({ kind: "idle", run: last.n, since, outcome: outcomeOf(last, lastStop?.run === last.n) });
 }
@@ -222,16 +261,16 @@ export function outcomeOf(run: RunRecord, stopped: boolean): Outcome {
   if (!facts.settled) {
     if (stopped) return { kind: "stopped" };
     const tail = errTail(run.stderrTail);
-    return { kind: "failed", reason: tail ? `cook exited before settling: ${tail}` : "cook exited before settling" };
+    return { kind: "failed", reason: tail ? `cook exited before settling: ${tail}` : "cook exited before settling", cause: "crash" };
   }
   if (facts.verdict?.kind === "report") {
     const { status, summary } = facts.verdict.report;
     if (status === "done") return { kind: "done", summary, reported: true };
     if (status === "needs_decision") return { kind: "needs_decision", question: summary };
     if (status === "blocked") return { kind: "blocked", reason: summary };
-    return { kind: "failed", reason: summary };
+    return { kind: "failed", reason: summary, cause: "report" };
   }
-  if (facts.verdict?.kind === "provider-error") return { kind: "failed", reason: facts.verdict.message };
+  if (facts.verdict?.kind === "provider-error") return { kind: "failed", reason: facts.verdict.message, cause: "provider" };
   if (stopped) return { kind: "stopped" };
   return { kind: "done", summary: facts.finalText ?? "(no final text)", reported: false };
 }
@@ -240,12 +279,18 @@ export function noticeFor(rec: TaskRecord, view: TaskView): Notice | undefined {
   const { state } = view;
   if (state.kind !== "idle" || state.run === undefined || state.outcome.kind === "stopped") return undefined;
   const run = state.run;
-  if (rec.events.some((e) => e.type === "notified" && e.run === run)) return undefined;
-  return { task: rec.spec.id, title: rec.spec.title, run, outcome: state.outcome };
+  const notified = rec.events.flatMap((e) => (e.type === "notified" ? [e.run] : []));
+  if (notified.includes(run)) return undefined;
+  const since = Math.max(0, ...notified);
+  const tried = rec.runs.flatMap((r) => {
+    const error = r.n > since && r.n < run ? providerError(r) : undefined;
+    return error === undefined ? [] : [{ model: runModel(rec, r) ?? DEFAULT_MODEL_TEXT, error }];
+  });
+  return { task: rec.spec.id, title: rec.spec.title, run, model: view.model, tried, outcome: state.outcome };
 }
 
 export type Action =
-  | { kind: "launch"; task: TaskId; run: RunNo; prompt: "brief" | "messages" | "existing"; reclaim: boolean }
+  | { kind: "launch"; task: TaskId; run: RunNo; prompt: "brief" | "messages" | "existing" | "fallback"; reclaim: boolean; profile: Profile | undefined }
   | { kind: "signal"; task: TaskId; pid: Pid; signal: "SIGTERM" | "SIGKILL" }
   | { kind: "remove-worktree"; task: TaskId; discard: boolean }
   | { kind: "notify"; notice: Notice };
@@ -299,12 +344,12 @@ export function plan(input: PlanInput): { views: TaskView[]; actions: Action[] }
   for (const { rec } of queued) {
     if (busy >= input.cap) break;
     if (live.has(rec.spec.sessionId)) continue;
-    const { last, nextRun, briefDelivered } = fold(rec);
+    const { last, nextRun, briefDelivered, fallback } = fold(rec);
     const reuse = last !== undefined && last.n === nextRun;
     const emptyClaim = reuse && last.claim.kind === "empty" ? last.claim : undefined;
     if (emptyClaim && now - emptyClaim.at < reclaimAfterMs) continue;
-    const prompt = reuse ? "existing" : briefDelivered ? "messages" : "brief";
-    actions.push({ kind: "launch", task: rec.spec.id, run: nextRun, prompt, reclaim: emptyClaim !== undefined });
+    const prompt = reuse ? "existing" : !briefDelivered ? "brief" : fallback ? "fallback" : "messages";
+    actions.push({ kind: "launch", task: rec.spec.id, run: nextRun, prompt, reclaim: emptyClaim !== undefined, profile: profileFor(rec, nextRun) });
     busy += 1;
   }
   return { views, actions };
@@ -352,18 +397,27 @@ const sentence = (text: string): string => {
   return /[.!?…]$/.test(flat) ? flat : `${flat}.`;
 };
 
+const ERROR_MAX = 160;
+const triedText = (t: Tried): string => `${t.model} (${oneLine(t.error, ERROR_MAX)})`;
+
 export function noticeLine(n: Notice): string {
   const head = `${n.task} "${n.title}"`;
+  const model = n.model ?? DEFAULT_MODEL_TEXT;
+  const fellBack = n.tried.length ? ` It fell back to ${model} after a provider error on ${n.tried.map(triedText).join(", then on ")}.` : "";
   const o = n.outcome;
   switch (o.kind) {
     case "done":
-      return `${head} is done${o.reported ? "" : " (no chef_report, final text follows)"}: ${sentence(o.summary)} Review with chef_result ${n.task}.`;
+      return `${head} is done${o.reported ? "" : " (no chef_report, final text follows)"}: ${sentence(o.summary)}${fellBack} Review with chef_result ${n.task}.`;
     case "needs_decision":
-      return `${head} needs a decision: ${sentence(o.question)} Answer with chef_send ${n.task}.`;
+      return `${head} needs a decision: ${sentence(o.question)}${fellBack} Answer with chef_send ${n.task}.`;
     case "blocked":
-      return `${head} is blocked: ${sentence(o.reason)} Remove the obstacle and chef_send ${n.task}, or chef_stop it.`;
+      return `${head} is blocked: ${sentence(o.reason)}${fellBack} Remove the obstacle and chef_send ${n.task}, or chef_stop it.`;
     case "failed":
-      return `${head} failed: ${sentence(o.reason)} chef_send ${n.task} to retry, or tell the human.`;
+      if (o.cause === "provider") {
+        const all = [...n.tried, { model, error: o.reason }].map(triedText).join("; ");
+        return `${head} failed with a provider error on every candidate model: ${all}. chef_send ${n.task} to retry on ${model}, or tell the human.`;
+      }
+      return `${head} failed: ${sentence(o.reason)}${fellBack} chef_send ${n.task} to retry, or tell the human.`;
   }
 }
 
@@ -383,7 +437,7 @@ export function formatWake(notices: readonly Notice[], restart?: RestartNote): s
 export function stateText(state: TaskState): string {
   switch (state.kind) {
     case "queued":
-      return state.why === "new" ? "queued" : state.why === "message" ? "queued with a message" : "queued (relaunch)";
+      return { new: "queued", message: "queued with a message", "interrupted-launch": "queued (relaunch)", fallback: "queued (next model)" }[state.why];
     case "cooking":
       return "cooking";
     case "idle":
@@ -460,13 +514,14 @@ export function boardHeader(board: Board): string {
 export function boardLines(board: Board, now: Millis, width: number): string[] {
   if (board.open.length === 0 && board.broken.length === 0) return [];
   const rows = [
-    ...board.open.map((v) => ({ id: `${glyph(v.state)} ${v.spec.id}`, state: stateText(v.state), detail: detailOf(v), age: ageOf(v, now) })),
-    ...board.broken.map((b) => ({ id: `? ${b.id}`, state: "broken", detail: b.reason, age: "" })),
+    ...board.open.map((v) => ({ id: `${glyph(v.state)} ${v.spec.id}`, state: stateText(v.state), model: v.model ?? "", detail: detailOf(v), age: ageOf(v, now) })),
+    ...board.broken.map((b) => ({ id: `? ${b.id}`, state: "broken", model: "", detail: b.reason, age: "" })),
   ];
   const w0 = Math.max(...rows.map((r) => [...r.id].length));
   const w1 = Math.max(...rows.map((r) => r.state.length));
+  const w2 = Math.max(...rows.map((r) => r.model.length));
   const lines = rows.map((r) => {
-    const prefix = `${r.id.padEnd(w0)}  ${r.state.padEnd(w1)}  `;
+    const prefix = `${r.id.padEnd(w0)}  ${r.state.padEnd(w1)}  ${w2 ? `${r.model.padEnd(w2)}  ` : ""}`;
     const suffix = r.age ? `  ${r.age}` : "";
     const detail = oneLine(r.detail, Math.max(0, width - [...prefix].length - suffix.length));
     return fit(`${prefix}${detail}`.trimEnd() + suffix, width);
@@ -550,7 +605,7 @@ export function modelsPrompt(config: ModelsConfig): string | undefined {
   return [
     "## Cook models",
     "",
-    "Each chef_dispatch picks the cook's models. Read the task, choose the rule whose `when` fits it best, and pass its name as `rule`. When no rule fits, leave `rule` out: the task gets the default models. Pass `model` only when the human names a model.",
+    "Each chef_dispatch picks the cook's models. Read the task, choose the rule whose `when` fits it best, and pass its name as `rule`. When no rule fits, leave `rule` out: the task gets the default models. Pass `model` only when the human names a model. When a model fails with a provider error, for example no credits left, the cook continues on the next model of its list by itself.",
     "",
     ...config.rules.map((r) => `- ${r.name}: when ${sentence(r.when)}${r.why ? ` Why: ${sentence(r.why)}` : ""} Models: ${list(r.use)}.`),
     `- Default models: ${list(config.default)}.`,

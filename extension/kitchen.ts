@@ -14,7 +14,6 @@ import {
   type RunNo,
   type SessionId,
   type TaskId,
-  type TaskSpec,
   type TaskView,
   errorMessage,
   millis,
@@ -22,8 +21,8 @@ import {
   parseProjectName,
   slugProjectName,
 } from "./domain.ts";
-import { type Action, type Dropped, type GitFacts, type LiveCooks, type ModelCheck, type PlanInput, type TaskRecord, closeVerdict, deriveTask, nextRunOf, plan, queuePosition, selectModels, stateText } from "./derive.ts";
-import { type CookEnd, CookTable, type PiInvocation, firstPrompt, followUpPrompt, launchCook, messagesSection, pidStart, signalCook } from "./cooks.ts";
+import { type Action, type Dropped, type GitFacts, type LiveCooks, type ModelCheck, type PlanInput, type TaskRecord, closeVerdict, deriveTask, fallbackFrom, nextRunOf, plan, queuePosition, selectModels, stateText } from "./derive.ts";
+import { type CookEnd, CookTable, type PiInvocation, fallbackPrompt, firstPrompt, followUpPrompt, launchCook, messagesSection, pidStart, signalCook } from "./cooks.ts";
 import { type RemoveResult, diffstat, ensureWorktree, gitFacts, inspectRepo, removeWorktree, verifyBaseBranch } from "./git.ts";
 import { RunTails, type Snapshot, type Store } from "./store.ts";
 
@@ -368,7 +367,7 @@ export class Kitchen extends KitchenReader {
     switch (action.kind) {
       case "launch":
         try {
-          await this.launch(action, spec);
+          await this.launch(action, rec);
         } catch (e) {
           this.store.appendEvent(spec.id, { type: "launch_failed", at: this.now(), run: action.run, reason: errorMessage(e) });
           throw e;
@@ -385,7 +384,8 @@ export class Kitchen extends KitchenReader {
     }
   }
 
-  private async launch(action: Extract<Action, { kind: "launch" }>, spec: TaskSpec): Promise<void> {
+  private async launch(action: Extract<Action, { kind: "launch" }>, rec: TaskRecord): Promise<void> {
+    const { spec } = rec;
     await this.cooks.adopt();
     if ((await this.cooks.live()).has(spec.sessionId)) return;
     const project = this.requireProject(spec.project);
@@ -396,7 +396,9 @@ export class Kitchen extends KitchenReader {
       const existing = this.store.readPrompt(spec.id, action.run) ?? "";
       if (texts.length) this.store.writePrompt(spec.id, action.run, `${existing.trimEnd()}\n\n${messagesSection(texts).join("\n")}\n`);
     } else {
-      this.store.writePrompt(spec.id, action.run, action.prompt === "brief" ? firstPrompt(spec, project, texts) : followUpPrompt(texts));
+      const from = action.prompt === "fallback" ? fallbackFrom(rec) : undefined;
+      const prompt = action.prompt === "brief" ? firstPrompt(spec, project, texts) : from ? fallbackPrompt(from, action.profile, texts) : followUpPrompt(texts);
+      this.store.writePrompt(spec.id, action.run, prompt);
     }
     this.store.moveToHandled(spec.id, pending.map((m) => m.file));
     if (action.reclaim) this.store.releaseEmptyClaim(spec.id, action.run);
@@ -412,7 +414,7 @@ export class Kitchen extends KitchenReader {
         promptFile: this.store.runPrompt(spec.id, action.run),
         sessionDir: this.store.sessionDir(spec.id),
         taskDir: this.store.taskDir(spec.id),
-        profile: spec.models[0] ?? config.models.default[0],
+        profile: action.profile,
         config,
         fds: claim.fds,
       },

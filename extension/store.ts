@@ -29,6 +29,7 @@ import {
   LeaseSchema,
   type Millis,
   type Project,
+  type Profile,
   type ProjectName,
   ProjectSchema,
   type RunNo,
@@ -175,7 +176,7 @@ export class Store {
     for (const id of this.listTaskIds()) {
       if (skip.has(id)) continue;
       try {
-        records.push(this.loadRecord(id, tails));
+        records.push(this.loadRecord(id, tails, config.models.default));
       } catch (e) {
         broken.push({ id, reason: errorMessage(e) });
       }
@@ -260,7 +261,7 @@ export class Store {
     return events;
   }
 
-  loadRecord(id: TaskId, tails: RunTails): TaskRecord {
+  loadRecord(id: TaskId, tails: RunTails, defaults: readonly Profile[] = this.loadConfig().config.models.default): TaskRecord {
     const spec = this.readSpec(id);
     const runsDir = join(this.taskDir(id), "runs");
     const ns = (existsSync(runsDir) ? readdirSync(runsDir) : [])
@@ -280,6 +281,7 @@ export class Store {
     const claimed = new Set(runs.filter((r) => r.claim.kind !== "none").map((r) => r.n));
     return {
       spec,
+      candidates: spec.models.length ? spec.models : defaults,
       // Before `hold` existed, a hold was logged as a `stop` that names a run that was never claimed.
       events: this.readEvents(id).map((e) => (e.type === "stop" && !claimed.has(runNo(e.run)) ? { ...e, type: "hold" } : e)),
       runs,

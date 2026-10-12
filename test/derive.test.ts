@@ -60,7 +60,7 @@ function run(n: number, facts: Partial<RunFacts>, over: Partial<RunRecord> = {})
 }
 
 function record(over: Partial<TaskRecord> = {}): TaskRecord {
-  return { spec: spec(), events: [], runs: [], pendingAt: [], worktreeExists: true, ...over };
+  return { spec: spec(), candidates: [], events: [], runs: [], pendingAt: [], worktreeExists: true, ...over };
 }
 
 const settledDone = (summary = "ok"): RunFacts => ({ ...EMPTY_RUN, settled: true, prompted: true, startedAt: millis(500), verdict: { kind: "report", report: { status: "done", summary } } });
@@ -148,7 +148,7 @@ test("the later of a chef_report and a provider error in stream order decides th
   const error = JSON.stringify({ type: "message_end", message: { role: "assistant", content: [], errorMessage: "Connection error.", stopReason: "error" } });
   const settled = JSON.stringify({ type: "agent_settled" });
   const errorLast = run(1, foldAll([report, error, settled]));
-  assert.deepEqual(outcomeOf(errorLast, false), { kind: "failed", reason: "Connection error." });
+  assert.deepEqual(outcomeOf(errorLast, false), { kind: "failed", reason: "Connection error.", cause: "provider" });
   const reportLast = run(1, foldAll([error, report, settled]));
   assert.deepEqual(outcomeOf(reportLast, false), { kind: "done", summary: "x", reported: true });
 });
@@ -193,7 +193,7 @@ test("a dead process without agent_settled is failed and carries the stderr tail
   const rec = record({ runs: [run(1, { startedAt: millis(1) }, { stderrTail: "line1\nError: boom\n" })] });
   const state = deriveTask(rec, none, NOW).state;
   assert.equal(state.kind, "idle");
-  assert.deepEqual(state.kind === "idle" && state.outcome, { kind: "failed", reason: "cook exited before settling: line1 Error: boom" });
+  assert.deepEqual(state.kind === "idle" && state.outcome, { kind: "failed", reason: "cook exited before settling: line1 Error: boom", cause: "crash" });
 });
 
 test("a dead process without agent_settled after a stop event is stopped, not failed", () => {
@@ -207,12 +207,12 @@ test("needs_decision, blocked, and failed reports map to their outcomes with the
   const of = (status: "needs_decision" | "blocked" | "failed") => outcomeOf(run(1, { settled: true, verdict: { kind: "report", report: { status, summary: "why" } } }), false);
   assert.deepEqual(of("needs_decision"), { kind: "needs_decision", question: "why" });
   assert.deepEqual(of("blocked"), { kind: "blocked", reason: "why" });
-  assert.deepEqual(of("failed"), { kind: "failed", reason: "why" });
+  assert.deepEqual(of("failed"), { kind: "failed", reason: "why", cause: "report" });
 });
 
 test("a clean settle without chef_report is done with reported false and the final text", () => {
   assert.deepEqual(outcomeOf(run(1, { settled: true, finalText: "all good" }), false), { kind: "done", summary: "all good", reported: false });
-  assert.deepEqual(outcomeOf(run(1, { settled: true, verdict: { kind: "provider-error", message: "Connection error." } }), false), { kind: "failed", reason: "Connection error." });
+  assert.deepEqual(outcomeOf(run(1, { settled: true, verdict: { kind: "provider-error", message: "Connection error." } }), false), { kind: "failed", reason: "Connection error.", cause: "provider" });
 });
 
 test("a prompt file without a run file is queued as an interrupted launch", () => {
@@ -231,12 +231,12 @@ test("an empty run file with no live process and a non-empty err file is a faile
     kind: "idle",
     run: 1,
     since: 7000,
-    outcome: { kind: "failed", reason: 'cook exited before its first output line: Error: Model "nope/none" not found.' },
+    outcome: { kind: "failed", reason: 'cook exited before its first output line: Error: Model "nope/none" not found.', cause: "launch" },
   });
   assert.equal(noticeFor(rec, deriveTask(rec, none, NOW))?.run, 1);
   const retried = record({ ...rec, pendingAt: [millis(8000)] });
   assert.deepEqual(deriveTask(retried, none, NOW).state, { kind: "queued", why: "message" });
-  assert.deepEqual(plan({ ...base, records: [retried] }).actions, [{ kind: "launch", task: "api-1", run: 2, prompt: "brief", reclaim: false }]);
+  assert.deepEqual(plan({ ...base, records: [retried] }).actions, [{ kind: "launch", task: "api-1", run: 2, prompt: "brief", reclaim: false, profile: undefined }]);
   const alive = deriveTask(rec, live(), NOW).state;
   assert.equal(alive.kind, "cooking", "a live cook that has not written yet is cooking, whatever the err file says");
 });
@@ -248,16 +248,16 @@ test("a launch_failed event for the next run derives idle(failed), and a message
     kind: "idle",
     run: 1,
     since: 6000,
-    outcome: { kind: "failed", reason: "git worktree add failed: base branch nope not found" },
+    outcome: { kind: "failed", reason: "git worktree add failed: base branch nope not found", cause: "launch" },
   });
   assert.deepEqual(plan({ ...base, records: [failed] }).actions.map((a) => a.kind), ["notify"]);
   const older = record({ events, pendingAt: [millis(5000)] });
   assert.equal(deriveTask(older, none, NOW).state.kind, "idle", "a message older than the failure does not retry it");
   const retried = record({ events, pendingAt: [millis(6500)] });
-  assert.deepEqual(plan({ ...base, records: [retried] }).actions, [{ kind: "launch", task: "api-1", run: 2, prompt: "brief", reclaim: false }]);
+  assert.deepEqual(plan({ ...base, records: [retried] }).actions, [{ kind: "launch", task: "api-1", run: 2, prompt: "brief", reclaim: false, profile: undefined }]);
   const afterRun = record({ events: [{ type: "launch_failed", at: 6000, run: 2, reason: "spawn of pi failed: ENOENT" }], runs: [run(1, settledDone())] });
   assert.deepEqual(deriveTask(afterRun, none, NOW).state.kind, "idle");
-  assert.deepEqual(plan({ ...base, records: [{ ...afterRun, pendingAt: [millis(6500)] }] }).actions, [{ kind: "launch", task: "api-1", run: 3, prompt: "messages", reclaim: false }]);
+  assert.deepEqual(plan({ ...base, records: [{ ...afterRun, pendingAt: [millis(6500)] }] }).actions, [{ kind: "launch", task: "api-1", run: 3, prompt: "messages", reclaim: false, profile: undefined }]);
 });
 
 test("a launch_failed event for a run that started after all is ignored", () => {
@@ -265,7 +265,7 @@ test("a launch_failed event for a run that started after all is ignored", () => 
   const rec = record({ events, runs: [run(1, settledDone("fine"))] });
   const state = deriveTask(rec, none, NOW).state;
   assert.deepEqual(state.kind === "idle" && state.outcome, { kind: "done", summary: "fine", reported: true });
-  assert.deepEqual(plan({ ...base, records: [{ ...rec, pendingAt: [millis(9000)] }] }).actions, [{ kind: "launch", task: "api-1", run: 2, prompt: "messages", reclaim: false }]);
+  assert.deepEqual(plan({ ...base, records: [{ ...rec, pendingAt: [millis(9000)] }] }).actions, [{ kind: "launch", task: "api-1", run: 2, prompt: "messages", reclaim: false, profile: undefined }]);
 });
 
 test("a pending message turns an idle task into queued(message)", () => {
@@ -302,7 +302,7 @@ test("a held task that a newer message resumed is not signalled, and its run doe
   assert.equal(cooking.views[0]!.state.kind, "cooking");
   assert.deepEqual(cooking.actions, []);
   const died = deriveTask(rec, none, NOW).state;
-  assert.deepEqual(died.kind === "idle" && died.outcome, { kind: "failed", reason: "cook exited before settling" });
+  assert.deepEqual(died.kind === "idle" && died.outcome, { kind: "failed", reason: "cook exited before settling", cause: "crash" });
 });
 
 test("a closed event wins over every other fact", () => {
@@ -334,7 +334,7 @@ test("plan launches the oldest queued tasks first and never more than cap minus 
   const q3 = record({ spec: spec({ id: id("api-3"), sessionId: "s3" as TaskSpec["sessionId"], createdAt: millis(2) }) });
   const { actions } = plan({ ...base, records: [cooking, q2, q3], live: live("s1"), cap: 2 });
   const launches = actions.filter((a) => a.kind === "launch");
-  assert.deepEqual(launches, [{ kind: "launch", task: "api-3", run: 1, prompt: "brief", reclaim: false }]);
+  assert.deepEqual(launches, [{ kind: "launch", task: "api-3", run: 1, prompt: "brief", reclaim: false, profile: undefined }]);
 });
 
 test("plan never launches a task whose session still has a live process", () => {
@@ -348,15 +348,15 @@ test("plan relaunches an interrupted launch with the existing prompt, and reclai
   const emptyClaim = record({ spec: spec({ id: id("api-2"), sessionId: "s2" as TaskSpec["sessionId"] }), runs: [run(1, {}, { claim: { kind: "empty", at: millis(900) } })] });
   const { actions } = plan({ ...base, records: [promptOnly, emptyClaim] });
   assert.deepEqual(actions, [
-    { kind: "launch", task: "api-1", run: 1, prompt: "existing", reclaim: false },
-    { kind: "launch", task: "api-2", run: 1, prompt: "existing", reclaim: true },
+    { kind: "launch", task: "api-1", run: 1, prompt: "existing", reclaim: false, profile: undefined },
+    { kind: "launch", task: "api-2", run: 1, prompt: "existing", reclaim: true, profile: undefined },
   ]);
 });
 
 test("plan relaunches an idle task with a message on the next run number", () => {
   const rec = record({ runs: [run(1, settledDone())], pendingAt: [millis(5)] });
   const { actions } = plan({ ...base, records: [rec] });
-  assert.deepEqual(actions, [{ kind: "launch", task: "api-1", run: 2, prompt: "messages", reclaim: false }]);
+  assert.deepEqual(actions, [{ kind: "launch", task: "api-1", run: 2, prompt: "messages", reclaim: false, profile: undefined }]);
 });
 
 test("a live process of a stopped run gets SIGTERM, then SIGKILL after the grace period", () => {
@@ -382,7 +382,7 @@ test("an empty claim younger than the reclaim threshold is left alone, an older 
   assert.deepEqual(deriveTask(young, none, NOW).state, { kind: "queued", why: "interrupted-launch" });
   assert.deepEqual(plan({ ...base, records: [young] }).actions, []);
   const old = record({ runs: [run(1, { prompted: false }, { claim: { kind: "empty", at: millis(NOW - 31_000) } })] });
-  assert.deepEqual(plan({ ...base, records: [old] }).actions, [{ kind: "launch", task: "api-1", run: 1, prompt: "existing", reclaim: true }]);
+  assert.deepEqual(plan({ ...base, records: [old] }).actions, [{ kind: "launch", task: "api-1", run: 1, prompt: "existing", reclaim: true, profile: undefined }]);
 });
 
 test("a closed task with a worktree yields remove-worktree, and its live cook is signalled", () => {
@@ -437,10 +437,10 @@ test("close of a cooking task or a task with an undelivered message is refused w
 
 test("formatWake renders the kitchen update the chef model reads, with the next tool per outcome", () => {
   const text = formatWake([
-    { task: id("api-7"), title: "Add rate limiter", run: runNo(2), outcome: { kind: "done", summary: "token bucket in limit.go, make test passes.", reported: true } },
-    { task: id("web-2"), title: "Fix login", run: runNo(1), outcome: { kind: "needs_decision", question: "cookie or bearer token?" } },
-    { task: id("web-3"), title: "Fix search", run: runNo(1), outcome: { kind: "failed", reason: "Connection error." } },
-    { task: id("web-4"), title: "Add w", run: runNo(1), outcome: { kind: "done", summary: "added w.txt", reported: true } },
+    { task: id("api-7"), title: "Add rate limiter", run: runNo(2), model: undefined, tried: [], outcome: { kind: "done", summary: "token bucket in limit.go, make test passes.", reported: true } },
+    { task: id("web-2"), title: "Fix login", run: runNo(1), model: undefined, tried: [], outcome: { kind: "needs_decision", question: "cookie or bearer token?" } },
+    { task: id("web-3"), title: "Fix search", run: runNo(1), model: undefined, tried: [], outcome: { kind: "failed", reason: "tests fail", cause: "report" } },
+    { task: id("web-4"), title: "Add w", run: runNo(1), model: undefined, tried: [], outcome: { kind: "done", summary: "added w.txt", reported: true } },
   ]);
   assert.equal(
     text,
@@ -448,14 +448,14 @@ test("formatWake renders the kitchen update the chef model reads, with the next 
       "Kitchen update (4):",
       '- api-7 "Add rate limiter" is done: token bucket in limit.go, make test passes. Review with chef_result api-7.',
       '- web-2 "Fix login" needs a decision: cookie or bearer token? Answer with chef_send web-2.',
-      '- web-3 "Fix search" failed: Connection error. chef_send web-3 to retry, or tell the human.',
+      '- web-3 "Fix search" failed: tests fail. chef_send web-3 to retry, or tell the human.',
       '- web-4 "Add w" is done: added w.txt. Review with chef_result web-4.',
     ].join("\n"),
   );
 });
 
 test("the first wake after a restart starts with the restart line", () => {
-  const text = formatWake([{ task: id("api-1"), title: "t", run: runNo(1), outcome: { kind: "blocked", reason: "no access" } }], { cooking: 1, finished: 2 });
+  const text = formatWake([{ task: id("api-1"), title: "t", run: runNo(1), model: undefined, tried: [], outcome: { kind: "blocked", reason: "no access" } }], { cooking: 1, finished: 2 });
   assert.match(text, /^Chef restarted: 1 cook still cooking, 2 runs finished while you were away\.\nKitchen update \(1\):\n- api-1 "t" is blocked: no access/);
 });
 
@@ -481,6 +481,109 @@ test("a read-only board names the owner pid in its header", () => {
   const view = deriveTask(record(), none, NOW);
   const board = { role: "read-only" as const, holder: { pid: 77 as Pid, sessionId: "s" }, projects: [], open: [view], broken: [], closedCount: 0, cooks: { busy: 0, cap: 3 } };
   assert.equal(boardLines(board, NOW, 80)[0], "chef (read-only, pid 77 owns the kitchen)");
+});
+
+const BROKE = { model: "fake/broke" };
+const SCRIPTED = { model: "fake/scripted", thinking: "low" as const };
+const providerFailed = (model: string, message = "402: This request requires more credits"): RunFacts => ({
+  ...EMPTY_RUN,
+  settled: true,
+  prompted: true,
+  startedAt: millis(500),
+  lastAt: millis(NOW - 1000),
+  model,
+  verdict: { kind: "provider-error", message },
+});
+
+test("a provider failure on candidate 1 queues the task for candidate 2, and plan launches run 2 there with the fallback prompt and no notice", () => {
+  const rec = record({ candidates: [BROKE, SCRIPTED], runs: [run(1, providerFailed("fake/broke"))] });
+  const view = deriveTask(rec, none, NOW);
+  assert.deepEqual(view.state, { kind: "queued", why: "fallback" });
+  assert.equal(view.model, "fake/scripted");
+  const { actions } = plan({ ...base, records: [rec] });
+  assert.deepEqual(actions, [{ kind: "launch", task: "api-1", run: 2, prompt: "fallback", reclaim: false, profile: SCRIPTED }]);
+});
+
+test("after a fallback, later runs stay on the candidate that worked", () => {
+  const rec = record({ candidates: [BROKE, SCRIPTED], runs: [run(1, providerFailed("fake/broke")), run(2, { ...settledDone(), model: "fake/scripted" })], pendingAt: [millis(NOW)] });
+  const { actions } = plan({ ...base, records: [rec] });
+  assert.deepEqual(actions, [{ kind: "launch", task: "api-1", run: 3, prompt: "messages", reclaim: false, profile: SCRIPTED }]);
+});
+
+test("a crash, a reported failure, and a stopped run do not fall back: each is idle(failed) with a notice", () => {
+  const crashed = record({ candidates: [BROKE, SCRIPTED], runs: [run(1, { model: "fake/broke" }, { stderrTail: "Error: boom" })] });
+  const reported = record({ candidates: [BROKE, SCRIPTED], runs: [run(1, { settled: true, model: "fake/broke", verdict: { kind: "report", report: { status: "failed", summary: "tests fail" } } })] });
+  const stopped = record({ candidates: [BROKE, SCRIPTED], runs: [run(1, providerFailed("fake/broke"))], events: [{ type: "stop", at: NOW - 2000, run: 1 }] });
+  for (const [rec, cause] of [[crashed, "crash"], [reported, "report"], [stopped, "provider"]] as const) {
+    const view = deriveTask(rec, none, NOW);
+    assert.equal(view.state.kind === "idle" && view.state.outcome.kind === "failed" && view.state.outcome.cause, cause);
+    const { actions } = plan({ ...base, records: [rec] });
+    assert.deepEqual(actions.map((a) => a.kind), ["notify"], cause);
+  }
+});
+
+test("a provider failure on the last candidate is idle(failed), and the notice names every model tried with its error", () => {
+  const rec = record({ candidates: [BROKE, SCRIPTED], runs: [run(1, providerFailed("fake/broke")), run(2, providerFailed("fake/scripted", "429: rate limit"))] });
+  const view = deriveTask(rec, none, NOW);
+  assert.deepEqual(view.state.kind === "idle" && view.state.outcome, { kind: "failed", reason: "429: rate limit", cause: "provider" });
+  const notice = noticeFor(rec, view);
+  assert.deepEqual(notice, {
+    task: "api-1",
+    title: "Add rate limiting",
+    run: 2,
+    model: "fake/scripted",
+    tried: [{ model: "fake/broke", error: "402: This request requires more credits" }],
+    outcome: { kind: "failed", reason: "429: rate limit", cause: "provider" },
+  });
+  assert.equal(
+    formatWake([notice!]),
+    'Kitchen update (1):\n- api-1 "Add rate limiting" failed with a provider error on every candidate model: fake/broke (402: This request requires more credits); fake/scripted (429: rate limit). chef_send api-1 to retry on fake/scripted, or tell the human.',
+  );
+  const retried = record({ ...rec, events: [{ type: "notified", at: NOW - 500, run: 2 }], pendingAt: [millis(NOW)] });
+  assert.deepEqual(plan({ ...base, records: [retried] }).actions, [{ kind: "launch", task: "api-1", run: 3, prompt: "messages", reclaim: false, profile: SCRIPTED }], "a retry stays on the last candidate");
+});
+
+test("the notice of the run after a fallback says which model failed, why, and which model finished", () => {
+  const rec = record({ candidates: [BROKE, SCRIPTED], runs: [run(1, providerFailed("fake/broke")), run(2, { ...settledDone("added a.txt"), model: "fake/scripted", lastAt: millis(NOW - 100) })] });
+  const notice = noticeFor(rec, deriveTask(rec, none, NOW));
+  assert.equal(
+    formatWake([notice!]),
+    'Kitchen update (1):\n- api-1 "Add rate limiting" is done: added a.txt. It fell back to fake/scripted after a provider error on fake/broke (402: This request requires more credits). Review with chef_result api-1.',
+  );
+  const later = record({ ...rec, events: [{ type: "notified", at: NOW, run: 2 }], runs: [...rec.runs, run(3, { ...settledDone("again"), model: "fake/scripted" })] });
+  assert.deepEqual(noticeFor(later, deriveTask(later, none, NOW))?.tried, [], "a notified run's fallback is not repeated");
+});
+
+test("a crash between the claim and the spawn of a fallback run relaunches the same run on the same candidate", () => {
+  const failed = run(1, providerFailed("fake/broke"));
+  const promptOnly = record({ candidates: [BROKE, SCRIPTED], runs: [failed, run(2, {}, { claim: { kind: "none" } })] });
+  const emptyClaim = record({ candidates: [BROKE, SCRIPTED], runs: [failed, run(2, {}, { claim: { kind: "empty", at: millis(NOW - 60_000) } })] });
+  assert.deepEqual(plan({ ...base, records: [promptOnly] }).actions, [{ kind: "launch", task: "api-1", run: 2, prompt: "existing", reclaim: false, profile: SCRIPTED }]);
+  assert.deepEqual(plan({ ...base, records: [emptyClaim] }).actions, [{ kind: "launch", task: "api-1", run: 2, prompt: "existing", reclaim: true, profile: SCRIPTED }]);
+});
+
+test("a launch failure of the fallback run does not use up a candidate", () => {
+  const rec = record({
+    candidates: [BROKE, SCRIPTED, { model: "fake/third" }],
+    runs: [run(1, providerFailed("fake/broke")), run(2, {}, { claim: { kind: "empty", at: millis(NOW - 1000) }, stderrTail: "Error: no such model" })],
+    events: [{ type: "launch_failed", at: NOW - 1000, run: 2, reason: "cook exited with code 1 before its first output line" }],
+  });
+  const view = deriveTask(rec, none, NOW);
+  assert.equal(view.state.kind === "idle" && view.state.outcome.kind === "failed" && view.state.outcome.cause, "launch");
+  const retry = record({ ...rec, pendingAt: [millis(NOW)] });
+  assert.deepEqual(plan({ ...base, records: [retry] }).actions, [{ kind: "launch", task: "api-1", run: 3, prompt: "messages", reclaim: false, profile: SCRIPTED }]);
+});
+
+test("a run file's assistant messages give the run's model as provider/id", () => {
+  const assistant = (provider: string, model: string) => JSON.stringify({ type: "message_end", message: { role: "assistant", content: [], provider, model, stopReason: "stop" } });
+  assert.equal(foldAll([assistant("openrouter", "z-ai/glm-5.2")]).model, "openrouter/z-ai/glm-5.2");
+  assert.equal(foldAll([assistant("fake", "broke"), assistant("fake", "scripted")]).model, "fake/scripted");
+});
+
+test("the board shows each task's model in its own column", () => {
+  const rec = record({ candidates: [BROKE, SCRIPTED], runs: [run(1, providerFailed("fake/broke"))] });
+  const board = { role: "owner" as const, holder: undefined, projects: [], open: [deriveTask(rec, none, NOW)], broken: [], closedCount: 0, cooks: { busy: 0, cap: 3 } };
+  assert.equal(boardLines(board, NOW, 80)[1], "○ api-1  queued (next model)  fake/scripted");
 });
 
 const MODELS: ModelsConfig = {
@@ -538,7 +641,7 @@ test("the chef's models section lists each rule with when, why, and models, then
     [
       "## Cook models",
       "",
-      "Each chef_dispatch picks the cook's models. Read the task, choose the rule whose `when` fits it best, and pass its name as `rule`. When no rule fits, leave `rule` out: the task gets the default models. Pass `model` only when the human names a model.",
+      "Each chef_dispatch picks the cook's models. Read the task, choose the rule whose `when` fits it best, and pass its name as `rule`. When no rule fits, leave `rule` out: the task gets the default models. Pass `model` only when the human names a model. When a model fails with a provider error, for example no credits left, the cook continues on the next model of its list by itself.",
       "",
       "- deep: when a hard bug. Why: judgment. Models: a/opus (thinking high), b/gpt.",
       "- docs: when docs only. Models: c/mini.",

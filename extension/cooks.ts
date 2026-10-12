@@ -2,7 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { closeSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename } from "node:path";
 import { promisify } from "node:util";
-import { type Config, type Pid, type Profile, type Project, type RunNo, type TaskSpec, isCode } from "./domain.ts";
+import { type Config, type Pid, type Profile, type Project, type RunNo, type TaskSpec, type Tried, isCode } from "./domain.ts";
 import type { LiveCooks } from "./derive.ts";
 import type { RunFds } from "./store.ts";
 
@@ -192,6 +192,18 @@ export function firstPrompt(spec: TaskSpec, project: Project, messages: readonly
   const where = `You work in ${spec.worktree} on branch ${spec.branch}, forked from ${spec.baseBranch}.`;
   const note = project.note ? ` (${project.note})` : "";
   const lines = [`# ${spec.title}`, "", `Task ${spec.id} for project ${project.name}${note}. ${where}`, "", "## Brief", "", spec.brief.trim()];
+  if (messages.length) lines.push("", ...messagesSection(messages));
+  return `${lines.join("\n")}\n`;
+}
+
+export function fallbackPrompt(from: Tried, to: Profile | undefined, messages: readonly string[]): string {
+  const lines = [
+    "## Model change",
+    "",
+    `Your last run on ${from.model} stopped with a provider error: ${from.error.trim()}`,
+    "",
+    `The chef moved this task to ${to?.model ?? "Pi's default model"}. Continue the task from where the last run stopped.`,
+  ];
   if (messages.length) lines.push("", ...messagesSection(messages));
   return `${lines.join("\n")}\n`;
 }

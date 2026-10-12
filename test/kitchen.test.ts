@@ -131,6 +131,34 @@ test("needs_decision wakes with the question; chef_send relaunches run 2 on the 
   assert.equal((await kitchen.result(view.spec.id)).git?.ahead, 1);
 });
 
+test("a cook whose first model answers HTTP 402 fails run 1, run 2 starts on the next candidate in the same session and reports done, and the chef gets one notice that names the fallback", async () => {
+  const { kitchen, store, repos } = await setup({ model: undefined, models: { default: [{ model: "fake/broke" }, { model: FAKE_MODEL }] } });
+  const { view } = await kitchen.dispatch({ project: "api", title: "Add a", brief: `${COMMIT_STEP("a.txt")}\n${REPORT_STEP("done", "added a.txt")}` });
+  assert.deepEqual(view.spec.models, [{ model: "fake/broke" }, { model: FAKE_MODEL }]);
+  const notice = await waitNotice(kitchen, view.spec.id);
+  assert.equal(notice.run, 2);
+  assert.deepEqual(notice.outcome, { kind: "done", summary: "added a.txt", reported: true });
+  assert.equal(notice.model, FAKE_MODEL);
+  assert.deepEqual(notice.tried.map((t) => t.model), ["fake/broke"]);
+  assert.match(notice.tried[0]!.error, /^402: .*requires more credits/);
+
+  const run1 = readFileSync(store.runFile(view.spec.id, runNo(1)), "utf8");
+  assert.match(run1, /"model":"broke","usage".*"stopReason":"error"/);
+  assert.doesNotMatch(run1, /auto_retry_start/, "Pi does not retry a 402");
+  const run2 = readFileSync(store.runFile(view.spec.id, runNo(2)), "utf8");
+  assert.equal((JSON.parse(run2.split("\n")[0]!) as { id: string }).id, view.spec.sessionId, "run 2 continues the task's session");
+  const prompt2 = readFileSync(store.runPrompt(view.spec.id, runNo(2)), "utf8");
+  assert.match(prompt2, /^## Model change\n\nYour last run on fake\/broke stopped with a provider error: 402: /);
+  assert.doesNotMatch(prompt2, /## Brief/, "the session already holds the brief");
+  assert.equal(git(repos.api, "rev-list", "--count", "main..chef/api-1"), "1", "the cook on the next model did the brief's work");
+
+  const quiet = await kitchen.tick();
+  assert.deepEqual(quiet.kind === "ok" && quiet.notices, []);
+  assert.deepEqual(store.readEvents(view.spec.id), [{ type: "notified", at: store.readEvents(view.spec.id)[0]!.at, run: 2 }], "no notice for run 1, nothing new on disk but the notice of run 2");
+  const result = await kitchen.result(view.spec.id);
+  assert.equal(result.view.model, FAKE_MODEL);
+});
+
 test("send to a cook that reported and is still exiting waits for the exit and reports relaunched, not queued behind the cap", async () => {
   const { kitchen, store } = await setup({ cookArgs: ["-e", FAKE_PROVIDER, "-e", SLOW_EXIT] });
   const brief = [REPORT_STEP("needs_decision", "cookie or bearer token?"), REPORT_STEP("done", "used cookies")].join("\n");

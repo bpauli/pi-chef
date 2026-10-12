@@ -22,7 +22,7 @@ function view(id: string, state: TaskState): TaskView {
     models: [],
     createdAt: millis(1),
   };
-  return { spec, state };
+  return { spec, state, model: undefined };
 }
 
 const board = (role: Board["role"], open: TaskView[]): Board => ({ role, holder: undefined, projects: [], open, broken: [], closedCount: 0, cooks: { busy: 0, cap: 3 } });
@@ -51,7 +51,7 @@ test("an idle task carries its outcome kind and text for every outcome", () => {
     [{ kind: "done", summary: "added a.txt", reported: true }, "added a.txt"],
     [{ kind: "needs_decision", question: "cookie or bearer?" }, "cookie or bearer?"],
     [{ kind: "blocked", reason: "no network" }, "no network"],
-    [{ kind: "failed", reason: "tests fail" }, "tests fail"],
+    [{ kind: "failed", reason: "tests fail", cause: "report" }, "tests fail"],
     [{ kind: "stopped" }, ""],
   ] as const;
   for (const [outcome, text] of outcomes) {

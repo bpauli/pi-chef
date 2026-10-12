@@ -106,6 +106,8 @@ Every field is optional. `maxCooks` caps the cooks that run at once (default 3).
 
 At dispatch, the chef skips a model that Pi does not know or that has no credentials, and says so. The remaining list is fixed for the task. `chef_dispatch` can also set a model per task, which goes first.
 
+When a model call fails with a provider error after Pi's own retries (for example `402: This request requires more credits`), the cook continues at once on the next model of its list, in the same session. The chef is not woken for that run. Its next kitchen update for the task says which model failed and why. When every model failed, the chef is woken with each model and its error.
+
 The older form `{ "model": "openai/gpt-6-astra", "thinking": "medium" }` still works. It is the same as a default list of one.
 
 The kitchen is plain files. `tasks/<id>/task.json` is the task, `runs/<n>.jsonl` is the cook's full Pi stream for run `n`, `log.jsonl` holds the chef's decisions, and `inbox/` holds messages to the cook. No task state is stored; chef derives it from these files and the live processes on every tick. See `docs/design.md` for the contract and `CONTEXT.md` for the words.

@@ -20,7 +20,7 @@ const spec: TaskSpec = {
 test("resultText cuts a long summary and a long diffstat, and keeps the branch line and the transcript path", () => {
   const diffstat = Array.from({ length: 40 }, (_, i) => ` ${"deep/".repeat(20)}file-${i}.ts | 12 ++++++------`).join("\n");
   const result: TaskResult = {
-    view: { spec, state: { kind: "idle", run: runNo(1), since: millis(0), outcome: { kind: "done", summary: "x".repeat(10_000), reported: true } } },
+    view: { spec, state: { kind: "idle", run: runNo(1), since: millis(0), outcome: { kind: "done", summary: "x".repeat(10_000), reported: true } }, model: undefined },
     project: { name: parseProjectName("api"), path: "/r", baseBranch: "main", note: undefined, addedAt: millis(1) },
     git: { dirtyFiles: 0, ahead: 1, unlanded: 1, onBranch: true },
     diffstat,

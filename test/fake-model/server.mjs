@@ -24,6 +24,11 @@ const server = createServer((req, res) => {
   req.on("data", (c) => (body += c));
   req.on("end", () => {
     const { messages = [], model } = JSON.parse(body || "{}");
+    if (model === "broke") {
+      res.writeHead(402, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "This request requires more credits", code: 402 } }));
+      return;
+    }
     const step = nextStep(messages);
     res.writeHead(200, { "content-type": "text/event-stream" });
     const chunk = (delta, finish = null) => res.write(`data: ${JSON.stringify({ id: "fake", object: "chat.completion.chunk", created: 0, model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);

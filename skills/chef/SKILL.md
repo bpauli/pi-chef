@@ -44,7 +44,8 @@ Handle every line, oldest first.
 - **done.** Call `chef_result`. Read the diff in the worktree with `read` and `bash`. Run the check yourself when it is cheap. Then tell the human what is on which branch, with the evidence. If the work is wrong, send a correction with `chef_send`.
 - **needs decision.** Answer it yourself when the brief or the human already settled it. Ask the human when it is a product, scope, money, or destructive choice. Relay the answer with `chef_send`.
 - **blocked.** Remove the cause (access, a wrong base branch, a missing tool) or send another approach with `chef_send`. After two blocks on one task, tell the human.
-- **failed.** Read the reason in `chef_result`. For a provider error or a crash, `chef_send` the task with "retry" once. For a repeated failure, tell the human.
+- **failed.** Read the reason in `chef_result`. For a crash, `chef_send` the task with "retry" once. A provider error on every candidate model means that the models are out of credit, rate-limited, or down: tell the human which models failed and why before you retry. For a repeated failure, tell the human.
+- **fell back.** A line that says "It fell back to" means that a model failed with a provider error and the cook continued on the next model. Handle the outcome as usual, and tell the human which model failed and why.
 
 Never poll. Never call `chef_board` in a loop. Never run `sleep`. The next update wakes you.
 

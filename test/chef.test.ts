@@ -171,7 +171,7 @@ test("a dispatch leads to exactly one chef-wake that starts a turn, and chef_res
   assert.equal(chef.events.slice(firstSettle, wakeAt).some((e) => e.type === "agent_start"), true, "the wake started a new turn");
 
   const result = text("chef_result");
-  assert.match(result, /^api-1 "Add a": idle \d+s, done, run 1\.\nSummary: added a.txt\n/);
+  assert.match(result, /^api-1 "Add a": idle \d+s, done, run 1 on fake\/scripted\.\nSummary: added a.txt\n/);
   assert.match(result, /Branch chef\/api-1 in .*: 1 commit ahead of main, 1 not landed, clean\./);
   assert.match(result, /a\.txt \| 1 \+/);
   assert.match(result, /Transcript: .*runs\/1\.jsonl$/);
@@ -215,6 +215,33 @@ test("the chef's prompt lists the model rules only in chef mode, and chef_dispat
   assert.match(dispatches[1]!, /^api-1 is cooking .* Skipped models: fake\/unknown \(Pi does not know this model\)\./);
   const spec = new Store(tk.kitchenDir).readSpec("api-1" as never);
   assert.deepEqual({ models: spec.models, rule: spec.rule }, { models: [{ model: FAKE_MODEL, thinking: "low" }], rule: "deep" });
+});
+
+test("when the first model fails with HTTP 402, the chef gets one wake, after the next model is done, and the wake and the result name the fallback", async () => {
+  tk = tempKitchen({ model: undefined, models: { default: [{ model: "fake/broke" }, { model: FAKE_MODEL }] } });
+  const repo = makeRepo(tk.home, "api");
+  const script = [
+    `STEP tool chef_add_project ${JSON.stringify({ path: repo })}`,
+    `STEP tool chef_dispatch ${JSON.stringify({ project: "api", title: "Add a", brief: `${COMMIT_STEP("a.txt")}\n${REPORT_STEP("done", "added a.txt")}` })}`,
+    "STEP say: dispatched",
+    `STEP tool chef_result ${JSON.stringify({ task: "api-1" })}`,
+    "STEP say: reviewed",
+  ].join("\n");
+  const chef = startPi("rpc", ["--chef"]);
+  chef.proc.stdin!.write(`${JSON.stringify({ id: "p1", type: "prompt", message: script })}\n`);
+  await until("the chef's second settle", () => (settles(chef.events) >= 2 ? true : undefined), 60_000);
+  chef.proc.stdin!.end();
+  assert.equal(await chef.exited, 0);
+
+  const wakes = wakeStarts(chef.events);
+  assert.equal(wakes.length, 1);
+  assert.match(
+    String(wakes[0]!.message!.content),
+    /^Kitchen update \(1\):\n- api-1 "Add a" is done: added a\.txt\. It fell back to fake\/scripted after a provider error on fake\/broke \(402: .*\)\. Review with chef_result api-1\.$/,
+  );
+  const result = chef.events.filter((e) => e.type === "tool_execution_end" && e.toolName === "chef_result").map((e) => e.result?.content?.map((c) => c.text ?? "").join("") ?? "")[0];
+  assert.match(result ?? "", /^api-1 "Add a": idle \d+s, done, run 2 on fake\/scripted\./);
+  assert.deepEqual(new Store(tk.kitchenDir).readEvents("api-1" as never).map((e) => [e.type, "run" in e ? e.run : undefined]), [["notified", 2]]);
 });
 
 async function chefBusyWhileCookFinishes(sleepSeconds: number) {
