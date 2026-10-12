@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { installCook } from "../extension/cook.ts";
-import { ROLE_ENV, SESSION_ENV, TASK_DIR_ENV } from "../extension/cooks.ts";
+import { ROLE_ENV, TASK_DIR_ENV } from "../extension/cooks.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 
@@ -42,9 +42,9 @@ function taskDir(): string {
 test("the cook claims inbox messages only while a turn is active: not before the first turn, not after agent_before_settle, not after SIGTERM", async () => {
   const dir = taskDir();
   const { pi, emit, sent } = fakePi();
-  const env: NodeJS.ProcessEnv = { [TASK_DIR_ENV]: dir, [ROLE_ENV]: "cook", [SESSION_ENV]: "sid" };
+  const env: NodeJS.ProcessEnv = { [TASK_DIR_ENV]: dir, [ROLE_ENV]: "cook" };
   installCook(pi, env);
-  assert.equal(env[SESSION_ENV], undefined, "the marker leaves the environment the cook's children inherit");
+  assert.deepEqual([env[ROLE_ENV], env[TASK_DIR_ENV]], [undefined, undefined], "a nested pi must not load as a cook of this task");
   const post = (name: string) => writeFileSync(join(dir, "inbox", `${name}.msg`), name);
   const pending = () => readdirSync(join(dir, "inbox")).filter((f) => f.endsWith(".msg")).sort();
   try {

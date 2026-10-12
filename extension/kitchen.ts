@@ -24,7 +24,7 @@ import {
   taskBranch,
 } from "./domain.ts";
 import { type Action, type Dropped, type GitFacts, type LiveCooks, type ModelCheck, type PlanInput, type TaskRecord, closeVerdict, deriveTask, fallbackFrom, nextRunOf, plan, queuePosition, selectModels, stateText } from "./derive.ts";
-import { type CookEnd, CookTable, type PiInvocation, fallbackPrompt, firstPrompt, followUpPrompt, launchCook, messagesSection, pidStart, signalCook } from "./cooks.ts";
+import { type CookEnd, CookTable, type PiInvocation, fallbackPrompt, firstPrompt, followUpPrompt, launchCook, messagesSection, pidStart } from "./cooks.ts";
 import { type RemoveResult, diffstat, ensureWorktree, gitFacts, inspectRepo, removeWorktree, verifyBaseBranch, verifyTaskBranch } from "./git.ts";
 import { RunTails, type Snapshot, type Store } from "./store.ts";
 
@@ -158,7 +158,7 @@ export class KitchenReader {
     const candidates = new Set<string>();
     const unknown = records.filter((rec) => {
       const last = rec.runs.at(-1);
-      if (last === undefined || last.claim.kind === "none" || last.facts.settled || live.has(rec.spec.sessionId)) return false;
+      if (last === undefined || last.claim.kind === "none" || last.facts.settled || live.has(rec.spec.id)) return false;
       const key = `${rec.spec.id}#${last.n}`;
       candidates.add(key);
       if (this.scannedUnknownRuns.has(key)) return false;
@@ -289,7 +289,7 @@ export class Kitchen extends KitchenReader {
         }
         if (state?.kind === "idle" && state.outcome.kind === "failed") return { kind: "launch-failed", reason: state.outcome.reason };
         if (state?.kind !== "queued") throw new ChefError(`${task} did not take the message: it is ${state ? stateText(state) : "gone"}.`);
-        if (!(await this.cooks.live()).has(rec.spec.sessionId)) return { kind: "queued", position: queuePosition(report.board, task) };
+        if (!(await this.cooks.live()).has(rec.spec.id)) return { kind: "queued", position: queuePosition(report.board, task) };
         if (this.now() >= deadline) return { kind: "after-exit" };
         await sleep(EXIT_POLL_MS);
       }
@@ -309,9 +309,9 @@ export class Kitchen extends KitchenReader {
     const { state } = deriveTask(rec, live, this.now());
     if (state.kind === "cooking") this.store.appendEvent(task, { type: "stop", at: this.now(), run: state.run });
     if (state.kind === "queued") this.store.appendEvent(task, { type: "hold", at: this.now(), run: nextRunOf(rec) });
-    const pid = live.get(rec.spec.sessionId);
+    const pid = live.get(rec.spec.id);
     if (pid === undefined || state.kind === "queued") return false;
-    await signalCook(pid, rec.spec.sessionId, "SIGTERM");
+    await this.cooks.signal(rec.spec.id, pid, "SIGTERM");
     return true;
   }
 
@@ -379,7 +379,7 @@ export class Kitchen extends KitchenReader {
         }
         return;
       case "signal":
-        await signalCook(action.pid, spec.sessionId, action.signal);
+        await this.cooks.signal(spec.id, action.pid, action.signal);
         return;
       case "remove-worktree": {
         const project = this.store.readProject(spec.project);
@@ -392,7 +392,7 @@ export class Kitchen extends KitchenReader {
   private async launch(action: Extract<Action, { kind: "launch" }>, rec: TaskRecord): Promise<void> {
     const { spec } = rec;
     await this.cooks.adopt();
-    if ((await this.cooks.live()).has(spec.sessionId)) return;
+    if ((await this.cooks.live()).has(spec.id)) return;
     const project = this.requireProject(spec.project);
     await ensureWorktree(project.path, spec.worktree, spec.branch, spec.baseBranch);
     const pending = this.store.pendingMessages(spec.id);
@@ -425,7 +425,7 @@ export class Kitchen extends KitchenReader {
       },
       (end) => this.failLaunchIfNoOutput(spec.id, action.run, end),
     );
-    if (pid !== undefined) this.cooks.record(spec.sessionId, pid);
+    if (pid !== undefined) this.cooks.record(spec.id, pid);
   }
 
   private failLaunchIfNoOutput(task: TaskId, run: RunNo, end: CookEnd): void {

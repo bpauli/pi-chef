@@ -14,7 +14,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
@@ -34,6 +34,7 @@ import {
   type ProjectName,
   ProjectSchema,
   type RunNo,
+  TASK_ID,
   type TaskEvent,
   TaskEventSchema,
   type TaskId,
@@ -76,6 +77,7 @@ export interface InboxMessage {
 
 const MSG = /^(\d{13})-[0-9a-f]{4}\.msg$/;
 const PROMPT = /^(\d+)\.prompt\.md$/;
+const RUN_FILE = /^\d+\.jsonl$/;
 const ERR_TAIL_BYTES = 2048;
 
 export function parseFile<T extends TSchema>(schema: T, path: string, raw: string): Static<T> {
@@ -109,8 +111,11 @@ export function parseSpec(path: string, raw: string): TaskSpec {
  * `path` comes from the OS (fd 1 of a process), so it is resolved and may end in " (deleted)".
  * Any other path is undefined.
  */
-export function taskOfRunFile(_root: string, _path: string): TaskId | undefined {
-  throw new Error("not implemented");
+export function taskOfRunFile(root: string, path: string): TaskId | undefined {
+  if (!path.startsWith(root + sep)) return undefined;
+  const [id, runs, file, ...rest] = path.slice(root.length + 1).split(sep);
+  if (id === undefined || !TASK_ID.test(id) || runs !== "runs" || file === undefined || !RUN_FILE.test(file) || rest.length > 0) return undefined;
+  return id as TaskId;
 }
 
 function writeAtomic(path: string, text: string): void {

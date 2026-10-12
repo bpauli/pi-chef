@@ -144,7 +144,8 @@ export interface TaskRecord {
   worktreeExists: boolean;
 }
 
-export type LiveCooks = ReadonlyMap<string, Pid>;
+/** Live cooks by task. The run file on a cook's fd 1 names the task, and a task has one session. */
+export type LiveCooks = ReadonlyMap<TaskId, Pid>;
 
 export interface LaunchFailure {
   run: RunNo;
@@ -240,7 +241,7 @@ export function deriveTask(rec: TaskRecord, live: LiveCooks, now: Millis): TaskV
   };
   const view = (state: TaskState): TaskView => ({ spec: rec.spec, state, model: modelOf(state) });
   if (closed) return view({ kind: "closed", at: millis(closed.at), discarded: closed.discarded });
-  const pid = live.get(rec.spec.sessionId);
+  const pid = live.get(rec.spec.id);
   if (pid !== undefined && last !== undefined && last.claim.kind !== "none" && !last.facts.settled) {
     return view({ kind: "cooking", run: last.n, since: last.facts.startedAt ?? last.claim.at, activity: last.facts.activity });
   }
@@ -319,7 +320,7 @@ export function plan(input: PlanInput): { views: TaskView[]; actions: Action[] }
     const view = deriveTask(rec, live, now);
     views.push(view);
     const { state } = view;
-    const pid = live.get(rec.spec.sessionId);
+    const pid = live.get(rec.spec.id);
     const { last, lastStop, closed } = fold(rec);
     if (state.kind === "closed") {
       if (rec.worktreeExists) actions.push({ kind: "remove-worktree", task: rec.spec.id, discard: state.discarded });
@@ -345,7 +346,7 @@ export function plan(input: PlanInput): { views: TaskView[]; actions: Action[] }
   queued.sort((a, b) => a.rec.spec.createdAt - b.rec.spec.createdAt);
   for (const { rec } of queued) {
     if (busy >= input.cap) break;
-    if (live.has(rec.spec.sessionId)) continue;
+    if (live.has(rec.spec.id)) continue;
     const { last, nextRun, briefDelivered, fallback } = fold(rec);
     const reuse = last !== undefined && last.n === nextRun;
     const emptyClaim = reuse && last.claim.kind === "empty" ? last.claim : undefined;

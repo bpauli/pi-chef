@@ -67,8 +67,8 @@ function record(over: Partial<TaskRecord> = {}): TaskRecord {
 }
 
 const settledDone = (summary = "ok"): RunFacts => ({ ...EMPTY_RUN, settled: true, prompted: true, startedAt: millis(500), verdict: { kind: "report", report: { status: "done", summary } } });
-const live = (sid = "sid-1", pid = 4242): Map<string, Pid> => new Map([[sid, pid as Pid]]);
-const none = new Map<string, Pid>();
+const live = (task = "api-1", pid = 4242): Map<TaskId, Pid> => new Map([[id(task), pid as Pid]]);
+const none = new Map<TaskId, Pid>();
 
 test("parseTaskId accepts case and spaces, resolves a unique bare sequence, and lists known ids on a miss", () => {
   const known = [id("api-7"), id("web-2")];
@@ -335,7 +335,7 @@ test("plan launches the oldest queued tasks first and never more than cap minus 
   const cooking = record({ spec: spec({ id: id("api-1"), sessionId: "s1" as TaskSpec["sessionId"], createdAt: millis(1) }), runs: [run(1, {})] });
   const q2 = record({ spec: spec({ id: id("api-2"), sessionId: "s2" as TaskSpec["sessionId"], createdAt: millis(3) }) });
   const q3 = record({ spec: spec({ id: id("api-3"), sessionId: "s3" as TaskSpec["sessionId"], createdAt: millis(2) }) });
-  const { actions } = plan({ ...base, records: [cooking, q2, q3], live: live("s1"), cap: 2 });
+  const { actions } = plan({ ...base, records: [cooking, q2, q3], live: live("api-1"), cap: 2 });
   const launches = actions.filter((a) => a.kind === "launch");
   assert.deepEqual(launches, [{ kind: "launch", task: "api-3", run: 1, prompt: "brief", reclaim: false, profile: undefined }]);
 });

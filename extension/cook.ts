@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readFileSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { type CookReport, CookReportSchema, type TaskSpec } from "./domain.ts";
-import { ROLE_ENV, SESSION_ENV, TASK_DIR_ENV } from "./cooks.ts";
+import { ROLE_ENV, TASK_DIR_ENV } from "./cooks.ts";
 import { recipeFor } from "./derive.ts";
 import { ROLE_EVENT, answerRole } from "./events.ts";
 import { Store, kitchenOfTaskDir, parseSpec } from "./store.ts";
@@ -27,10 +27,9 @@ export function cookContract(spec: TaskSpec): string {
 export function installCook(pi: ExtensionAPI, env: NodeJS.ProcessEnv): void {
   const taskDir = env[TASK_DIR_ENV];
   if (!taskDir) throw new Error(`${TASK_DIR_ENV} is not set for a cook`);
-  // The owner finds this cook by CHEF_SESSION_ID in /proc/<pid>/environ, which keeps
-  // the start-time environment. Processes the cook spawns get process.env, so
-  // without these variables a bash child or a nested pi is never taken for a cook.
-  for (const name of [SESSION_ENV, ROLE_ENV, TASK_DIR_ENV]) delete env[name];
+  // A pi that this cook starts (a subagent, or pi from bash) inherits process.env. With these
+  // variables it would load the cook half for the same task and take messages from its inbox.
+  for (const name of [ROLE_ENV, TASK_DIR_ENV]) delete env[name];
   const specPath = join(taskDir, "task.json");
   const spec = parseSpec(specPath, readFileSync(specPath, "utf8"));
   const inbox = join(taskDir, "inbox");
