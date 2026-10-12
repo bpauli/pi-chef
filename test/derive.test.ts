@@ -415,24 +415,32 @@ test("plan emits one notify per idle task with an unnotified final outcome", () 
 
 test("close refuses dirty or unlanded work unless discard, and names the counts", () => {
   const idle = deriveTask(record({ runs: [run(1, settledDone())] }), none, NOW).state;
-  const refused = closeVerdict(id("api-1"), idle, { dirtyFiles: 2, ahead: 3, unlanded: 3, onBranch: true }, false);
+  const refused = closeVerdict(spec(), idle, { dirtyFiles: 2, ahead: 3, unlanded: 3, onBranch: true }, false);
   assert.equal(refused.ok, false);
   assert.equal(!refused.ok && refused.reason, "api-1 has 3 commits not on the base branch or any remote branch and 2 changed files in the worktree. Merge or push the work, or pass discard: true if the human said to drop it.");
-  assert.deepEqual(closeVerdict(id("api-1"), idle, { dirtyFiles: 2, ahead: 3, unlanded: 3, onBranch: true }, true), { ok: true });
-  assert.deepEqual(closeVerdict(id("api-1"), idle, { dirtyFiles: 0, ahead: 3, unlanded: 0, onBranch: true }, false), { ok: true });
-  assert.match((closeVerdict(id("api-1"), idle, { dirtyFiles: 0, ahead: 0, unlanded: 0, onBranch: false }, false) as { reason: string }).reason, /HEAD is not on chef\/api-1/);
-  assert.deepEqual(closeVerdict(id("api-1"), idle, undefined, false), { ok: true });
+  assert.deepEqual(closeVerdict(spec(), idle, { dirtyFiles: 2, ahead: 3, unlanded: 3, onBranch: true }, true), { ok: true });
+  assert.deepEqual(closeVerdict(spec(), idle, { dirtyFiles: 0, ahead: 3, unlanded: 0, onBranch: true }, false), { ok: true });
+  assert.deepEqual(closeVerdict(spec(), idle, undefined, false), { ok: true });
+});
+
+test("the close refusal for a worktree off its branch names the branch stored in the task spec", () => {
+  const idle = deriveTask(record({ runs: [run(1, settledDone())] }), none, NOW).state;
+  const refused = closeVerdict(spec({ branch: "feat/api-1" }), idle, { dirtyFiles: 0, ahead: 0, unlanded: 0, onBranch: false }, false);
+  assert.equal(
+    !refused.ok && refused.reason,
+    "api-1's worktree HEAD is not on feat/api-1: a detached HEAD, another branch, or a rebase in progress. Its commits would be lost with the worktree. Put them on feat/api-1 first, or pass discard: true if the human said to drop them.",
+  );
 });
 
 test("close of a cooking task or a task with an undelivered message is refused without discard, and close of a closed task is ok", () => {
   const cooking = deriveTask(record({ runs: [run(1, {})] }), live(), NOW).state;
-  assert.equal(closeVerdict(id("api-1"), cooking, undefined, false).ok, false);
-  assert.equal(closeVerdict(id("api-1"), cooking, undefined, true).ok, true);
+  assert.equal(closeVerdict(spec(), cooking, undefined, false).ok, false);
+  assert.equal(closeVerdict(spec(), cooking, undefined, true).ok, true);
   const relaunching = deriveTask(record({ runs: [run(1, settledDone())], pendingAt: [millis(2000)] }), none, NOW).state;
   assert.deepEqual(relaunching, { kind: "queued", why: "message" });
-  assert.match((closeVerdict(id("api-1"), relaunching, undefined, false) as { reason: string }).reason, /undelivered message/);
-  assert.equal(closeVerdict(id("api-1"), relaunching, undefined, true).ok, true);
-  assert.deepEqual(closeVerdict(id("api-1"), { kind: "closed", at: NOW, discarded: false }, undefined, false), { ok: true });
+  assert.match((closeVerdict(spec(), relaunching, undefined, false) as { reason: string }).reason, /undelivered message/);
+  assert.equal(closeVerdict(spec(), relaunching, undefined, true).ok, true);
+  assert.deepEqual(closeVerdict(spec(), { kind: "closed", at: NOW, discarded: false }, undefined, false), { ok: true });
 });
 
 test("formatWake renders the kitchen update the chef model reads, with the next tool per outcome", () => {

@@ -317,7 +317,7 @@ export class Kitchen extends KitchenReader {
       const before = deriveTask(rec, live, this.now());
       const project = this.store.readProject(rec.spec.project);
       const git = project ? await gitFacts(project.path, rec.spec.worktree, rec.spec.branch, rec.spec.baseBranch) : undefined;
-      const verdict = closeVerdict(task, before.state, git, discard);
+      const verdict = closeVerdict(rec.spec, before.state, git, discard);
       if (!verdict.ok) throw new ChefError(verdict.reason);
       const discarded = before.state.kind === "closed" ? before.state.discarded : discard;
       if (before.state.kind !== "closed") {

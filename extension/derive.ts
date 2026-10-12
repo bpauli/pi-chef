@@ -364,7 +364,8 @@ export interface GitFacts {
 
 export type CloseVerdict = { ok: true } | { ok: false; reason: string };
 
-export function closeVerdict(task: TaskId, state: TaskState, git: GitFacts | undefined, discard: boolean): CloseVerdict {
+export function closeVerdict(spec: TaskSpec, state: TaskState, git: GitFacts | undefined, discard: boolean): CloseVerdict {
+  const task = spec.id;
   if (state.kind === "closed" || discard) return { ok: true };
   if (state.kind === "cooking") return { ok: false, reason: `${task} is still cooking. chef_stop it first, or pass discard: true to drop its work.` };
   if (state.kind === "queued" && state.why === "message") {
@@ -372,7 +373,7 @@ export function closeVerdict(task: TaskId, state: TaskState, git: GitFacts | und
   }
   if (git === undefined) return { ok: true };
   if (!git.onBranch) {
-    return { ok: false, reason: `${task}'s worktree HEAD is not on chef/${task}: a detached HEAD, another branch, or a rebase in progress. Its commits would be lost with the worktree. Put them on chef/${task} first, or pass discard: true if the human said to drop them.` };
+    return { ok: false, reason: `${task}'s worktree HEAD is not on ${spec.branch}: a detached HEAD, another branch, or a rebase in progress. Its commits would be lost with the worktree. Put them on ${spec.branch} first, or pass discard: true if the human said to drop them.` };
   }
   const parts: string[] = [];
   if (git.unlanded > 0) parts.push(`${plural(git.unlanded, "commit")} not on the base branch or any remote branch`);
