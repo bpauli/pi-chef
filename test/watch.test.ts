@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { ROOT, until } from "./support.ts";
 
-const WATCH = join(ROOT, "extension/watch.ts");
+const WATCH = join(ROOT, "extension/watch.mjs");
 const fixture = (name: string): string[] => readFileSync(join(ROOT, "test/fixtures", name), "utf8").split("\n").filter(Boolean);
 
 const cleanups: (() => void)[] = [];

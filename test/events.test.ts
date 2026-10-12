@@ -6,7 +6,7 @@ import { cooksSnapshot, offSnapshot } from "../extension/events.ts";
 import { Store } from "../extension/store.ts";
 import { ROOT } from "./support.ts";
 
-const WATCH = join(ROOT, "extension/watch.ts");
+const WATCH = join(ROOT, "extension/watch.mjs");
 const store = new Store("/k");
 
 function view(id: string, state: TaskState): TaskView {

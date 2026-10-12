@@ -137,7 +137,7 @@ Review the work on the branch with `read` and `bash`. Merge it or push it as you
 To watch one cook live in a terminal, run the viewer on its task directory:
 
 ```sh
-node <path to pi-chef>/extension/watch.ts <kitchen>/tasks/<task id>
+node <path to pi-chef>/extension/watch.mjs <kitchen>/tasks/<task id>
 ```
 
 ## Add-ons
