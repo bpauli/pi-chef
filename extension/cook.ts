@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { type CookReport, CookReportSchema, type TaskSpec } from "./domain.ts";
 import { ROLE_ENV, SESSION_ENV, TASK_DIR_ENV } from "./cooks.ts";
 import { ROLE_EVENT, answerRole } from "./events.ts";
-import { loadPrinciples, principlesBlock } from "./principles.ts";
 import { parseSpec } from "./store.ts";
 
 const INBOX_POLL_MS = 300;
@@ -58,7 +57,7 @@ export function installCook(pi: ExtensionAPI, env: NodeJS.ProcessEnv): void {
     },
   });
 
-  const contract = `${cookContract(spec)}\n\n${principlesBlock("cook", loadPrinciples())}`;
+  const contract = cookContract(spec);
   pi.on("before_agent_start", (event) => ({ systemPrompt: `${event.systemPrompt}\n\n${contract}` }));
   pi.events.on(ROLE_EVENT, (data) => answerRole(data, "cook"));
 

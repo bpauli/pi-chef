@@ -176,7 +176,7 @@ Chef mode persists as a `chef-mode` session entry (`pi.appendEntry`), so a resum
 `extension/index.ts` reads `CHEF_ROLE`. With `cook`, it installs only the cook half:
 
 - `chef_report`, as above.
-- A cook contract appended to the system prompt in `before_agent_start`: work only in this worktree, commit on the task branch, never wait for a human, end every run with exactly one `chef_report`. The cook principles block follows the contract (see "Principles").
+- A cook contract appended to the system prompt in `before_agent_start`: work only in this worktree, commit on the task branch, never wait for a human, end every run with exactly one `chef_report`.
 - The inbox poller (300 ms). It claims only while a turn is active: `turn_start` opens the window, `agent_before_settle`, `session_shutdown`, SIGTERM, and SIGHUP close it. Inside the window it renames a message into `handled/` first, then calls `pi.sendUserMessage(text, { deliverAs: "steer" })`. Outside it (before the first turn, where a steer races the print-mode prompt; while the run ends; while the cook dies after a stop) the message stays in the inbox for the owner to relaunch. `chef_send` to a cook that is being stopped answers `after-stop`: the message restarts the task once the cook has exited.
 
 Double loading is guarded with `globalThis[Symbol.for("chef.loaded")]`. The guard is cleared on `session_shutdown`, so `/reload` registers the tools again.
@@ -280,21 +280,25 @@ The external-run API has no state for "needs the human". FleetView draws `stoppe
 
 The add-on keeps the display fields it last wrote per task and writes only when they change. An update sends every display field, with `undefined` for one that went away, so an old preview never stays. A task that leaves the snapshot, every task on `role: "off"`, and every task on `session_shutdown` are unregistered. A register that fails because an earlier copy of the add-on left the job (for example across `/reload`) becomes an update.
 
-## Principles
+## Add-on: principles
 
-`principles/<name>/SKILL.md` holds the 24 pstack principle skills, vendored by `tools/sync-pstack.mjs` (MIT, `principles/LICENSE`, upstream commit in `principles/SOURCE.md`). These files are the single source. `loadPrinciples` parses `name` and `description` from each frontmatter with typebox, and a file without them is a load error. `principlesBlock(role, principles)` is pure. It returns a frame, the always-on rules of that role (`RULES` in `extension/principles.ts`, each rule names its principles), and an index derived from the files: one line per principle with its name, its description, and its absolute path. The block ends with "Before you apply a principle, read its file in full."
+`addons/principles/` is the package `pi-chef-principles`. With it, the chef and every cook work by the pstack principles. Without it, no prompt gets a principles block. Cooks run without `-ne`, so a cook loads the human's installed Pi packages, and an installed add-on also loads in each cook.
 
-| Session | Block | Where |
-|---|---|---|
-| cook | cook rules and the index | `cook.ts`, after the cook contract in `before_agent_start` |
-| chef, while chef mode is on | chef rules and the index | `chef.ts`, `before_agent_start` when the session has the kitchen open |
-| normal Pi session, or chef mode off | none | |
+`addons/principles/principles/<name>/SKILL.md` holds the 24 pstack principle skills, vendored by `addons/principles/sync-pstack.mjs` (MIT, `principles/LICENSE`, upstream commit in `principles/SOURCE.md`). These files are the single source. `loadPrinciples` parses `name` and `description` from each frontmatter with typebox, and a file without them is a load error. `principlesBlock(role, principles)` is pure. It returns a frame, the always-on rules of that role (`RULES` in `addons/principles/principles.ts`, each rule names its principles), and an index derived from the files: one line per principle with its name, its description, and its absolute path. The block ends with "Before you apply a principle, read its file in full."
 
-Each process loads the principles once, when the extension installs. The chef handler reads the chef-mode state at each turn, so `/chef` and `/chef off` mid-session change the next turn's prompt.
+The add-on loads the principles once, when it installs. In `before_agent_start` it sends a role query and appends the block of the answered role to `event.systemPrompt`:
+
+| Role answer | Block |
+|---|---|
+| `cook` | cook rules and the index, after the cook contract that `cook.ts` appended |
+| `chef` | chef rules and the index |
+| none (normal Pi session, chef mode off, chef not installed) | none |
+
+Pi passes each `before_agent_start` handler the system prompt with the changes of the handlers before it (`dist/core/extensions/runner.js:1137-1148`), so the cook contract and the block both reach the model. The add-on asks at each turn, so `/chef` and `/chef off` mid-session change the next turn's prompt, and the load order of chef and the add-on does not matter.
 
 Two other deliveries were rejected:
 
-- The files are not under `skills/`, because `pi.skills` would list all 24 in every Pi session that has chef installed.
+- The files are not under `skills/`, because `pi.skills` would list all 24 in every Pi session that has the add-on installed.
 - `resources_discover` can add the directory as skills for `--chef` sessions and cooks, but it runs before `/chef` can turn chef mode on mid-session, so that session gets nothing.
 
 `principle-explain-the-number` links to `../benchmark-checklist/`, which is not vendored. The link stays as upstream wrote it.
@@ -314,7 +318,6 @@ About 3k lines of source. Any flow passes through at most three files: tool, the
 | `kitchen.ts` | The deep module: the seven operations plus `tick`. It imports no Pi types. |
 | `chef.ts` | The Pi shell: tools as one-call adapters, `/chef`, the widget, the `Waker`, the cooks snapshot emission, activation. |
 | `cook.ts` | The cook half. |
-| `principles.ts` | Loads the vendored principles and builds the block for each role. |
 | `events.ts` | The integration contract: the cooks snapshot types, the role query, the event names, and the pure builder. No Pi types. |
 | `watch.ts` | The viewer of a task's run files, under plain Node. Node builtins only. |
 
@@ -326,6 +329,9 @@ The add-ons live outside `extension/` and import no runtime code from it:
 | `addons/herdr/herdr.ts` | The only herdr caller: list, open, and report cook tabs, and the in-memory `CookTabs` record. |
 | `addons/subagents/index.ts` | The `pi-chef-subagents` entry: the snapshot listener, the FleetView session identity, the notifications. |
 | `addons/subagents/fleet.ts` | Finds and loads `pi-subagents/external-runs`, maps a task to its job, and keeps the jobs this add-on wrote (`FleetRecords`). |
+| `addons/principles/index.ts` | The `pi-chef-principles` entry: the role query at each turn and the block in the system prompt. |
+| `addons/principles/principles.ts` | Loads the vendored principles and builds the block for each role. |
+| `addons/principles/sync-pstack.mjs` | Vendors the principles from a cursor/plugins checkout. |
 
 Every file line and run-file line is checked with `Value.Check` before a field is read. A bad line is skipped and counted, never a crash of the tick. The tick reads the kitchen through one `Store.snapshot`, each file in isolation: a task whose `task.json` does not parse is listed on the board as `broken` with the reason, a bad `config.json` yields the defaults plus an error line, a bad project file is skipped plus an error line. The shell shows an error when it starts and again only after it went away and came back. `task.json` is written through tmp plus rename inside the task directory, whose `mkdir` is the exclusive step.
 
@@ -380,12 +386,12 @@ PR creation or merge automation (a brief can tell the cook to run `gh`), per-pro
 
 ## Test plan
 
-- Unit (`node --test`, no Pi): run-file fold over recorded Pi streams, `deriveTask` per state (including launch failures and the same-millisecond stop), `plan` (cap, interrupted launch and the reclaim threshold, stop escalation, the stuck settled cook, closed with worktree), close verdict, wake batching with the in-flight set, board text, result text truncation, the LF-only reader with split UTF-8 input, the cook poller gate against a fake extension API, the principle index against the vendored files, the rules of each role.
+- Unit (`node --test`, no Pi): run-file fold over recorded Pi streams, `deriveTask` per state (including launch failures and the same-millisecond stop), `plan` (cap, interrupted launch and the reclaim threshold, stop escalation, the stuck settled cook, closed with worktree), close verdict, wake batching with the in-flight set, board text, result text truncation, the LF-only reader with split UTF-8 input, the cook poller gate against a fake extension API.
 - Git (real temp repos): ensure worktree twice, landed by base and by remote branch, dirty refusal, a stale remote-tracking ref never deletes the branch, a detached HEAD is off the branch.
 - Kitchen e2e (real cook Pi processes, fake model, temp `PI_CODING_AGENT_DIR` and `CHEF_HOME`): dispatch to two projects; a cook reports `needs_decision`; `send` relaunches and the cook commits and reports `done`; a message sent mid-run is steered; stop, and send right after a stop; close refuses then succeeds; a new `Kitchen` instance adopts a live cook and derives the outcome of a cook that exited while no owner ran; a second tick does nothing; a bad model and a broken worktree path are launch failures that a send retries; a broken task.json and config.json do not stop the tick; a cook that never exits is killed; a ghost cook blocks a second launch; a lost lease is found before any write; a read-only session promotes.
-- Chef e2e (a chef `pi --mode rpc --chef` on the fake model): tools are active only with `--chef`; a dispatch leads to one `chef-wake` that starts a turn; a wake queued behind a busy turn is marked notified only on delivery; a wake dropped with `clear_queue` is sent again after the turn settles; the model gets the chef principles with `--chef` and after `/chef`, and none in a plain session or after `/chef off`. A kitchen e2e test proves the cook's model gets the cook principles and no chef rules.
+- Chef e2e (a chef `pi --mode rpc --chef` on the fake model): tools are active only with `--chef`; a dispatch leads to one `chef-wake` that starts a turn; a wake queued behind a busy turn is marked notified only on delivery; a wake dropped with `clear_queue` is sent again after the turn settles.
 - Integration events: `cooksSnapshot` per state (cooking with activity and transcript, idle with each outcome, idle before a first run, queued, closed absent, the viewer arguments). Chef e2e with `test/cooks-recorder.ts` loaded by `-e`: a dispatch emits snapshots that go from no task to cooking to idle done, with no two equal snapshots in a row; a request gets the current snapshot again; `/chef off` emits role off, and nothing follows. With `test/role-recorder.ts`, which asks for the role at each turn start and records the answer right after `emit` returns: a chef session answers no role, then `chef` after `/chef`, then no role after `/chef off`; a kitchen e2e cook answers `cook`.
 - Viewer (a real `node extension/watch.ts` process on a temp task dir): it shows the tool line, the text, and the report while the run file grows, with a character split across two appends; a provider error; a newer run file switches with a separator; a `closed` event makes it exit 0.
 - herdr add-on (`addons/herdr/test/`, `CookTabs` and the add-on entry driven by snapshots against `fake-herdr.mjs`, which logs its argv and keeps its tabs in a JSON file): a cooking task opens exactly one tab with the label, cwd, and viewer command, and the next snapshot calls herdr not at all; the command starts the viewer from a shell; an existing tab is adopted; each state change reports once with the mapped state; a closed tab is not reopened for the same run; a read-only or off snapshot calls herdr not at all and the next owner snapshot adopts again; a herdr failure is an error line, shown once; the entry asks for a snapshot at session start and skips another version; outside herdr it does nothing. Chef e2e with the add-on loaded by `-e` and the fake binary: inside herdr a dispatch opens one tab and reports `working`, then `idle` once; without `HERDR_ENV` no herdr call happens. `test/support.ts` deletes every `HERDR_*` variable, so no test reaches the human's live herdr session.
 - FleetView add-on (`addons/subagents/test/`, the add-on entry against a fake pi-subagents package in a temp agent dir whose `external-runs` module records the calls and keeps the jobs): a cooking task registers one `running` job under the session file with its activity and transcript; each outcome maps to its state and action, and an unchanged snapshot writes nothing; a task that leaves the snapshot, role off, and session shutdown unregister; a snapshot before session start is shown at session start; a job left by an earlier copy is updated; a project install is found; without the package nothing is shown and one info notice says so. Chef e2e with the add-on loaded by `-e` and the fake package in the temp agent dir: a dispatch registers one job, shows it `running`, then `completed`, and `/chef off` unregisters it.
-- Sync (a fixture tree, no network): `tools/sync-pstack.mjs` vendors the principles, drops a removed one, and a second run changes nothing.
+- Principles add-on (`addons/principles/test/`): the index in each role's block lists every vendored principle with its description and a path that exists; each role's block has its own rules and none of the other role's; `loadPrinciples` refuses a file without a description. Sync, on a fixture tree with no network: `sync-pstack.mjs` vendors the principles, drops a removed one, and a second run changes nothing. Chef e2e with the add-on loaded by `-e`: the model gets the chef principles with `--chef` and after `/chef`, and none in a plain session or after `/chef off`. Without the add-on, a `--chef` model gets none. Kitchen e2e: with the add-on in `cookArgs`, the cook's model gets the cook contract and the cook principles and no chef rules; without it, the contract and no principles.

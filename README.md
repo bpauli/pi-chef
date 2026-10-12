@@ -55,17 +55,19 @@ node <path to pi-chef>/extension/watch.ts <kitchen>/tasks/<task id>
 
 ## Integrations
 
-chef itself depends on no terminal multiplexer and no other Pi package. It publishes the open tasks as a cooks snapshot on Pi's in-process event bus (`pi-chef:cooks:v1`, see `docs/design.md`, "Integration events"). Optional add-on packages in `addons/` read it. Install only the ones you want:
+chef itself depends on no terminal multiplexer and no other Pi package. It publishes the open tasks as a cooks snapshot on Pi's in-process event bus (`pi-chef:cooks:v1`), and answers a role query (`pi-chef:role:v1`) with `chef` or `cook` (see `docs/design.md`, "Integration events"). Optional add-on packages in `addons/` use them. Install only the ones you want:
 
 | Add-on | Does |
 |---|---|
 | `addons/herdr` | Inside herdr, opens a `cook <task id>` tab per cooking task that shows the cook live, and shows each cook's state in the herdr sidebar. See `addons/herdr/README.md`. |
 | `addons/subagents` | Shows each open task as a job in the FleetView of [pi-subagents](https://pi.dev/packages/pi-subagents): running, completed, failed, or stopped when it needs you or was stopped. See `addons/subagents/README.md`. |
+| `addons/principles` | The chef and every cook work by the principles of [pstack](https://github.com/cursor/plugins/tree/main/pstack), the agent plugin by Lauren Tan. Each gets the always-on rules of its role and an index of the 24 vendored principle files in its system prompt. See `addons/principles/README.md`. |
 
 Pi git sources take no subdirectory, so install an add-on from a local path, for example from the checkout that `pi install git:github.com/bpauli/pi-chef` made:
 
 ```sh
 pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/herdr
+pi install ~/.pi/agent/git/github.com/bpauli/pi-chef/addons/principles
 ```
 
 ## Configuration
@@ -84,25 +86,6 @@ The kitchen lives in `<pi agent dir>/chef` (usually `~/.pi/agent/chef`). Set `CH
 Every field is optional. `maxCooks` caps the cooks that run at once (default 3). `model` and `thinking` apply to every cook; `chef_dispatch` can set a model per task. `cookArgs` are extra `pi` arguments for every cook.
 
 The kitchen is plain files. `tasks/<id>/task.json` is the task, `runs/<n>.jsonl` is the cook's full Pi stream for run `n`, `log.jsonl` holds the chef's decisions, and `inbox/` holds messages to the cook. No task state is stored; chef derives it from these files and the live processes on every tick. See `docs/design.md` for the contract and `CONTEXT.md` for the words.
-
-## Principles
-
-The chef and every cook work by the principles of [pstack](https://github.com/cursor/plugins/tree/main/pstack), the agent plugin by Lauren Tan. chef vendors the 24 `principle-*` skills from pstack into `principles/`, under pstack's MIT license (`principles/LICENSE`). `principles/SOURCE.md` names the upstream commit.
-
-chef adds a principles block to the system prompt of two roles:
-
-- A cook gets the cook rules, for example "reproduce a bug first and fix the root cause" and "verify on the real artifact before you report done".
-- The chef gets the chef rules, for example "every brief names the check that proves done" and "a cook's report is not proof". The chef gets the block only while chef mode is on.
-
-Each block also has an index of all 24 principles: the name, when the principle applies, and the absolute path of its file. The model reads a file in full before it applies that principle. A normal Pi session gets no block, and the vendored files are not listed as skills.
-
-To update the vendored files, clone [cursor/plugins](https://github.com/cursor/plugins) and run:
-
-```sh
-node tools/sync-pstack.mjs <path to the cursor/plugins checkout>
-```
-
-The script replaces the vendored principles, copies the license, and writes `principles/SOURCE.md`. A second run changes nothing. Do not edit the files in `principles/` by hand.
 
 ## How pi-chef differs from firstmate
 
@@ -129,4 +112,4 @@ The tests need no network and no credentials. The e2e tests start real Pi proces
 
 ## License
 
-MIT, see `LICENSE`. The vendored pstack principles in `principles/` keep their own MIT license, see `principles/LICENSE`.
+MIT, see `LICENSE`. The vendored pstack principles in `addons/principles/principles/` keep their own MIT license, see `addons/principles/principles/LICENSE`.

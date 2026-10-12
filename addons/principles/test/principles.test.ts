@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { PRINCIPLES_DIR, RULES, loadPrinciples, principlesBlock } from "../extension/principles.ts";
+import { PRINCIPLES_DIR, RULES, loadPrinciples, principlesBlock } from "../principles.ts";
 
 const ROLES = ["chef", "cook"] as const;
 

@@ -6,10 +6,10 @@ import { StringDecoder } from "node:string_decoder";
 import { after, afterEach, before, test } from "node:test";
 import { TICK_MS, WAKE_TIMING } from "../extension/chef.ts";
 import { scanCooks, signalCook } from "../extension/cooks.ts";
-import { PRINCIPLES_DIR, RULES } from "../extension/principles.ts";
+import { PRINCIPLES_DIR, RULES } from "../addons/principles/principles.ts";
 import { Store } from "../extension/store.ts";
 import type { CooksSnapshot } from "../extension/events.ts";
-import { CHEF_ENTRY, COMMIT_STEP, COOKS_RECORDER, ROLE_RECORDER, FAKE_HERDR, HERDR_ADDON, SUBAGENTS_ADDON, installFakeSubagents, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, ROOT, type TempKitchen, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
+import { CHEF_ENTRY, COMMIT_STEP, COOKS_RECORDER, PRINCIPLES_ADDON, ROLE_RECORDER, FAKE_HERDR, HERDR_ADDON, SUBAGENTS_ADDON, installFakeSubagents, FAKE_MODEL, FAKE_PROVIDER, PI_CLI, REPORT_STEP, ROOT, type TempKitchen, makeRepo, startFakeModel, tempKitchen, until } from "./support.ts";
 
 let fake: Awaited<ReturnType<typeof startFakeModel>>;
 let tk: TempKitchen;
@@ -103,22 +103,22 @@ function assertChefPrinciples(prompt: string, on: boolean, when: string): void {
   }
 }
 
-test("the chef's model gets the chef principles with --chef and a plain session's model gets none", async () => {
+test("with the principles add-on the chef's model gets the chef principles with --chef, and a plain session or a chef without the add-on gets none", async () => {
   tk = tempKitchen();
-  const plain = startPi("json", [], "STEP echo-system:");
-  plain.proc.stdin!.end();
-  assert.equal(await plain.exited, 0);
-  assertChefPrinciples(lastAssistantText(plain.events), false, "plain session");
-
-  const chef = startPi("json", ["--chef"], "STEP echo-system:");
-  chef.proc.stdin!.end();
-  assert.equal(await chef.exited, 0);
-  assertChefPrinciples(lastAssistantText(chef.events), true, "--chef");
+  const echo = async (extra: string[]) => {
+    const run = startPi("json", extra, "STEP echo-system:");
+    run.proc.stdin!.end();
+    assert.equal(await run.exited, 0);
+    return lastAssistantText(run.events);
+  };
+  assertChefPrinciples(await echo(["-e", PRINCIPLES_ADDON]), false, "plain session with the add-on");
+  assertChefPrinciples(await echo(["--chef", "-e", PRINCIPLES_ADDON]), true, "--chef with the add-on");
+  assertChefPrinciples(await echo(["--chef"]), false, "--chef without the add-on");
 });
 
-test("the chef principles follow /chef on and /chef off in the same session", async () => {
+test("with the principles add-on the chef principles follow /chef on and /chef off in the same session", async () => {
   tk = tempKitchen();
-  const pi = startPi("rpc", []);
+  const pi = startPi("rpc", ["-e", PRINCIPLES_ADDON]);
   const send = (id: string, message: string) => pi.proc.stdin!.write(`${JSON.stringify({ id, type: "prompt", message })}\n`);
   const answered = (id: string) => until(`response ${id}`, () => (pi.events.some((e) => e.type === "response" && e.id === id) ? true : undefined));
   const echoAfter = async (id: string, message: string, settled: number) => {

@@ -4,9 +4,9 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { test } from "node:test";
-import { ROOT, git, makeRepo } from "./support.ts";
+import { git, makeRepo } from "../../../test/support.ts";
 
-const SYNC = join(ROOT, "tools/sync-pstack.mjs");
+const SYNC = join(import.meta.dirname, "..", "sync-pstack.mjs");
 
 function put(path: string, text: string): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -53,7 +53,7 @@ test("sync-pstack vendors every upstream principle and the license, drops what u
     assert.equal(after["LICENSE"], "MIT fixture license\n");
     assert.match(after["SOURCE.md"]!, new RegExp(`Commit: ${sha}\n`));
     assert.match(after["SOURCE.md"]!, /https:\/\/github\.com\/cursor\/plugins\/tree\/main\/pstack/);
-    assert.match(after["SOURCE.md"]!, /Do not edit these files by hand; rerun tools\/sync-pstack\.mjs/);
+    assert.match(after["SOURCE.md"]!, /Do not edit these files by hand; rerun addons\/principles\/sync-pstack\.mjs/);
 
     const second = sync(checkout, out);
     assert.equal(second.status, 0, second.stderr);

@@ -11,7 +11,7 @@ npm test             # node --test: unit, git, and offline e2e tests with the fa
 CHEF_TEST_PI=$(readlink -f $(which pi)) node --test test/chef.test.ts   # chef e2e on an installed Pi binary
 npm run check        # both
 pi -e ./extension/index.ts --chef   # try it in a real Pi session
-node tools/sync-pstack.mjs <cursor/plugins checkout>   # update the vendored principles/
+node addons/principles/sync-pstack.mjs <cursor/plugins checkout>   # update the vendored principles
 ```
 
 The e2e tests start real Pi processes on `test/fake-model/`, a scripted local model. They need no network and no credentials.
@@ -22,7 +22,7 @@ The e2e tests start real Pi processes on `test/fake-model/`, a scripted local mo
 - Never store task state. Derive it in `extension/derive.ts`.
 - Parse every external line (kitchen files, run files, tool parameters) with typebox at the boundary. Inside, trust the types.
 - `extension/kitchen.ts` imports no Pi types. Pi wiring lives in `extension/chef.ts` and `extension/cook.ts`.
-- Add-on code in `addons/` (not its tests) imports only types from `extension/` (`import type`). Each one parses the cooks snapshot with typebox.
+- Add-on code in `addons/` (not its tests) imports only types from `extension/` (`import type`). Each one that reads the cooks snapshot parses it with typebox.
 - All chef tool names start with `chef_`. pstack's Pi extension owns `agent`, `send_message`, `list_agents`, and `stop_agent`.
 - Name tests after the behavior they prove. A test must fail when that behavior breaks.
 - Comments only for a non-obvious why.
@@ -30,7 +30,7 @@ The e2e tests start real Pi processes on `test/fake-model/`, a scripted local mo
 
 ## Principles
 
-This repo follows the [pstack](https://github.com/cursor/plugins/tree/main/pstack) principles. Each one below has a concrete rule here. Before you apply one, read its file in `principles/principle-<name>/SKILL.md`, for example `principles/principle-model-the-domain/SKILL.md`. These files are vendored. Do not edit them. To update them, rerun `tools/sync-pstack.mjs` (see `README.md`, "Principles").
+This repo follows the [pstack](https://github.com/cursor/plugins/tree/main/pstack) principles. Each one below has a concrete rule here. Before you apply one, read its file in `addons/principles/principles/principle-<name>/SKILL.md`, for example `addons/principles/principles/principle-model-the-domain/SKILL.md`. These files are vendored for the optional principles add-on, and this repo's own development follows them too. Do not edit them. To update them, rerun `addons/principles/sync-pstack.mjs` (see `addons/principles/README.md`).
 
 | Principle | Rule in this repo |
 |---|---|

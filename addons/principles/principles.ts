@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 
-export const PRINCIPLES_DIR = fileURLToPath(new URL("../principles", import.meta.url));
+export const PRINCIPLES_DIR = fileURLToPath(new URL("./principles", import.meta.url));
 
 const FrontmatterSchema = Type.Object({ name: Type.String({ minLength: 1 }), description: Type.String({ minLength: 1 }) });
 
